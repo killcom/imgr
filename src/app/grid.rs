@@ -696,44 +696,6 @@ impl App {
                 }
             }
         });
-        if !self.lib.is_empty() {
-            ui.menu_button(tr("사전 예시로 고정", "Pin as Library example"), |ui| {
-                for kind in library::Kind::ALL {
-                    let entries: Vec<(String, String)> = self.lib.iter().filter(|e| e.kind == kind).map(|e| (e.key.clone(), e.name.clone())).collect();
-                    if entries.is_empty() {
-                        continue;
-                    }
-                    ui.menu_button(kind.label(), |ui| {
-                        for (k, name) in entries {
-                            ui.horizontal(|ui| {
-                                if ui.button(&name).on_hover_text(tr("예시로 고정", "Pin as example")).clicked() {
-                                    self.lib_pin(&k, &ids, false);
-                                    ui.close();
-                                }
-                                if ui.small_button(tr("표지", "Cover")).on_hover_text(tr("예시로 고정하고 사전 카드의 대표 그림으로", "Pin as example and use as the Library card's cover picture")).clicked() {
-                                    self.lib_pin(&k, &ids, true);
-                                    ui.close();
-                                }
-                            });
-                        }
-                    });
-                }
-            });
-        }
-        if one {
-            if let Some(im) = &first {
-                if !im.prompt.is_empty() && ui.button(tr("이 그림으로 사전 항목 만들기…", "Create Library entry from this picture…")).clicked() {
-                    self.modal = Some(Modal::NewEntry {
-                        kind: library::Kind::Outfit,
-                        name: library::next_name(&self.lib, library::Kind::Outfit),
-                        text: library::tags_from_prompt(&im.prompt),
-                        from: Some(im.id.clone()),
-                        error: String::new(),
-                    });
-                    ui.close();
-                }
-            }
-        }
         ui.separator();
         if ui.button(if one { tr("이름 바꾸기…    F2", "Rename…    F2") } else { tr("이름 한꺼번에 바꾸기…    F2", "Batch rename…    F2") }).clicked() {
             self.open_rename();

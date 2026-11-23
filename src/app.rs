@@ -1,13 +1,12 @@
 //! imgr window. Search + side filters on the left, picture grid in the middle,
 //! details / score / hashtags on the right. Viewer, compare, matrix (seed x
-//! preset table) and library replace the grid. Everything can also be driven
+//! preset table) replace the grid. Everything can also be driven
 //! through ctl (see ctl.rs and app/ctl_cmds.rs).
 #![allow(deprecated)]
 
 mod album_ui;
 mod ctl_cmds;
 mod grid;
-mod library_ui;
 mod modals;
 mod panels;
 mod views;
@@ -25,7 +24,6 @@ use serde_json::Value;
 use crate::ctl;
 use crate::i18n::tr;
 use crate::db::{self, Db, Img};
-use crate::library::{self, Entry, Folder};
 use crate::ops;
 use crate::query::{self, Query, Sort};
 use crate::settings::Settings;
@@ -77,7 +75,6 @@ enum View {
     Viewer,
     Compare,
     Matrix,
-    Library,
     /// albums as folders: the top shows 앨범 없음 + top-level albums
     Albums,
 }
@@ -89,7 +86,6 @@ impl View {
             View::Viewer => "viewer",
             View::Compare => "compare",
             View::Matrix => "matrix",
-            View::Library => "library",
             View::Albums => "albums",
         }
     }
@@ -111,8 +107,6 @@ enum Modal {
     /// a new album under `parent` (0 = top); made only on 만들기. `put`: pictures to put in it
     AlbumNew { parent: u32, new: String, put: Vec<String> },
     AlbumDelete { ids: Vec<u32> },
-    NewEntry { kind: library::Kind, name: String, text: String, from: Option<String>, error: String },
-    GenDir { dir: String },
     /// ⚙ 설정
     Settings { per_folder: String, ctl: bool },
 }
@@ -318,19 +312,6 @@ pub struct App {
     rand_seed: u64,
     marquee: Option<grid::Marquee>,
     press: Option<(Pos2, usize)>,
-    lib: Vec<Entry>,
-    lib_folders: Vec<Folder>,
-    /// Arc: the UI clones these every frame
-    lib_examples: HashMap<String, Arc<Vec<String>>>,
-    lib_dirty: bool,
-    lib_sel: Option<String>,
-    lib_search: String,
-    lib_buf_key: String,
-    lib_text: String,
-    lib_note: String,
-    lib_readme: Vec<String>,
-    /// unsaved tag edits per library entry
-    lib_drafts: HashMap<String, String>,
     mx_cache: Option<views::Matrix>,
     mx_hidden: HashSet<String>,
     mx_focus: Option<(usize, usize)>,
@@ -572,17 +553,6 @@ impl App {
             rand_seed: fastrand::u64(..),
             marquee: None,
             press: None,
-            lib: Vec::new(),
-            lib_folders: Vec::new(),
-            lib_examples: HashMap::new(),
-            lib_dirty: true,
-            lib_sel: None,
-            lib_search: String::new(),
-            lib_buf_key: String::new(),
-            lib_text: String::new(),
-            lib_note: String::new(),
-            lib_readme: Vec::new(),
-            lib_drafts: HashMap::new(),
             mx_cache: None,
             mx_hidden: HashSet::new(),
             mx_focus: None,
@@ -603,7 +573,6 @@ impl App {
             settings,
         };
         app.reindex();
-        app.reload_library();
         app.refilter(false);
         // come back to the picture that was open last time
         let last = app.settings.last_focus.clone();
@@ -752,14 +721,6 @@ impl App {
     fn refilter(&mut self, keep_focus: bool) {
         self.sync_album_names();
         let mut q = Query::parse(&self.query_text);
-        let keys = q.lib_keys();
-        if !keys.is_empty() {
-            self.ensure_lib_examples();
-            for k in keys {
-                let set: HashSet<String> = self.lib_examples.get(&k).map(|v| v.iter().cloned().collect()).unwrap_or_default();
-                q.lib.insert(k, set);
-            }
-        }
         for t in q.album_trees() {
             let sub = self.db.album_subtree(t);
             q.trees.insert(t, sub);
@@ -1119,7 +1080,6 @@ impl App {
                 self.reindex();
                 self.apply_pending_album();
                 self.mark_changed();
-                self.lib_dirty = true;
                 self.save_now();
                 if forgot > 0 {
                     self.refilter_after_removal(keep);
@@ -1530,7 +1490,7 @@ impl App {
         } else if self.view == View::Albums && named == Some(Some(0)) && !rest.trim().is_empty() {
             self.view = View::Grid;
             Some(rest)
-        } else if matches!(self.view, View::Grid | View::Matrix | View::Library) && named == Some(Some(0)) {
+        } else if matches!(self.view, View::Grid | View::Matrix) && named == Some(Some(0)) {
             Some(rest)
         } else {
             None
@@ -2025,7 +1985,6 @@ impl App {
                 im.albums = it.albums;
             }
         }
-        self.lib_dirty = true;
         self.mark_changed();
         self.mx_cache = None;
         self.refilter(true);
@@ -2067,7 +2026,6 @@ impl App {
         self.reindex();
         self.undo.clear();
         self.mark_changed();
-        self.lib_dirty = true;
         self.mx_cache = None;
         self.save_now();
         self.refilter_after_removal(keep);
@@ -2244,7 +2202,7 @@ impl App {
         self.view = View::Viewer;
     }
 
-    /// Open a picture big from a view that is not the grid (library, matrix):
+    /// Open a picture big from a view that is not the grid (matrix):
     /// the search is changed so ←/→ walk through the same group.
     fn open_in_viewer(&mut self, id: &str, query: Option<String>, from: View) {
         if let Some(q) = query {
@@ -2337,7 +2295,7 @@ impl App {
         });
         let shift = ctx.input(|i| i.modifiers.shift);
         for (k, m) in &evs {
-            if m.ctrl && self.view != View::Library {
+            if m.ctrl {
                 match k {
                     Key::C => copy = true,
                     Key::X => cut = true,
@@ -2346,16 +2304,14 @@ impl App {
                 }
             }
         }
-        if self.view != View::Library {
-            if copy {
-                if shift { self.copy_paths() } else { self.album_copy(false) }
-            }
-            if cut {
-                self.album_copy(true);
-            }
-            if paste {
-                self.paste_any();
-            }
+        if copy {
+            if shift { self.copy_paths() } else { self.album_copy(false) }
+        }
+        if cut {
+            self.album_copy(true);
+        }
+        if paste {
+            self.paste_any();
         }
         for (k, m) in evs {
             self.on_key(k, m);
@@ -2374,8 +2330,8 @@ impl App {
         if fwd && self.view == View::Viewer {
             self.move_focus(1, false);
         }
-        // Ctrl+wheel: thumbnail size in the grid / matrix / library
-        if matches!(self.view, View::Grid | View::Matrix | View::Library | View::Albums) {
+        // Ctrl+wheel: thumbnail size in the grid / matrix / albums
+        if matches!(self.view, View::Grid | View::Matrix | View::Albums) {
             // egui turns Ctrl+wheel into a zoom gesture (and does not scroll)
             let z = ctx.input(|i| i.zoom_delta());
             if (z - 1.0).abs() > 0.001 && self.modal.is_none() {
@@ -2388,7 +2344,7 @@ impl App {
         let grid_like = matches!(self.view, View::Grid | View::Albums);
         let cols = if grid_like { self.cols.max(1) as isize } else { 1 };
         match k {
-            Key::Num1 | Key::Num2 | Key::Num3 | Key::Num4 | Key::Num5 | Key::Num6 if !m.ctrl && self.view != View::Library => {
+            Key::Num1 | Key::Num2 | Key::Num3 | Key::Num4 | Key::Num5 | Key::Num6 if !m.ctrl => {
                 let n = match k {
                     Key::Num1 => 1,
                     Key::Num2 => 2,
@@ -2401,7 +2357,7 @@ impl App {
             }
             // big viewer: ` shows / hides the text lines at the top and bottom
             Key::Backtick if !m.ctrl && self.view == View::Viewer => self.settings.viewer_text = !self.settings.viewer_text,
-            Key::Num0 | Key::Backtick if !m.ctrl && self.view != View::Library => self.set_score(0),
+            Key::Num0 | Key::Backtick if !m.ctrl => self.set_score(0),
             Key::ArrowRight | Key::ArrowLeft | Key::ArrowDown | Key::ArrowUp if self.view == View::Matrix => {
                 let (dr, dc) = match k {
                     Key::ArrowRight => (0, 1),
@@ -2414,14 +2370,14 @@ impl App {
             Key::ArrowRight => {
                 if self.view == View::Compare {
                     self.cmp_focus = (self.cmp_focus + 1).min(self.cmp_ids.len().saturating_sub(1));
-                } else if self.view != View::Library {
+                } else {
                     self.move_focus(1, m.shift);
                 }
             }
             Key::ArrowLeft => {
                 if self.view == View::Compare {
                     self.cmp_focus = self.cmp_focus.saturating_sub(1);
-                } else if self.view != View::Library {
+                } else {
                     self.move_focus(-1, m.shift);
                 }
             }
@@ -2440,7 +2396,7 @@ impl App {
             }
             Key::Home if matches!(self.view, View::Grid | View::Viewer | View::Albums) => self.move_focus(-(1 << 40), m.shift),
             Key::End if matches!(self.view, View::Grid | View::Viewer | View::Albums) => self.move_focus(1 << 40, m.shift),
-            Key::A if m.ctrl && self.view != View::Library => {
+            Key::A if m.ctrl => {
                 self.sel = self.shown.iter().map(|&i| self.db.images[i].id.clone()).collect();
                 if self.view == View::Albums {
                     self.album_sel = self.album_lead().into_iter().flatten().collect();
@@ -2452,7 +2408,7 @@ impl App {
                 self.zp.zoom = 1.0;
                 self.zp.center = vec2(0.5, 0.5);
             }
-            Key::E if m.ctrl && self.view != View::Library => self.open_export(),
+            Key::E if m.ctrl => self.open_export(),
             Key::C | Key::X | Key::V if m.ctrl => {} // handled above (Copy / Cut / Paste)
             Key::Escape if self.pic_drag.is_some() => {
                 self.pic_drag = None;
@@ -2476,7 +2432,6 @@ impl App {
                         self.open_in_viewer(&id, None, View::Matrix);
                     }
                 }
-                View::Library => self.lib_open_examples(),
                 View::Compare => {
                     if let Some(id) = self.cmp_ids.get(self.cmp_focus).cloned() {
                         self.open_in_viewer(&id, None, View::Compare);
@@ -2505,7 +2460,6 @@ impl App {
             }
             Key::C if !m.ctrl => match self.view {
                 View::Compare => self.go_back(),
-                View::Library => {}
                 View::Matrix => {
                     let ids = self.matrix_row_ids();
                     self.open_compare_ids(ids);
@@ -2515,13 +2469,10 @@ impl App {
             Key::M if !m.ctrl => {
                 self.view = if self.view == View::Matrix { View::Grid } else { View::Matrix };
             }
-            Key::L if !m.ctrl => {
-                self.view = if self.view == View::Library { View::Grid } else { View::Library };
-            }
             Key::A if !m.ctrl && !m.shift => {
                 self.view = if self.view == View::Albums { View::Grid } else { View::Albums };
             }
-            Key::T if !m.ctrl && self.view != View::Library => {
+            Key::T if !m.ctrl => {
                 if self.fullscreen {
                     self.set_fullscreen(false);
                 }
@@ -2537,15 +2488,12 @@ impl App {
             Key::Slash => self.focus_search = true,
             Key::Delete if self.view == View::Albums => self.delete_in_album_view(),
             Key::N if m.ctrl && self.view == View::Albums => self.new_album_here(),
-            Key::Delete if self.view != View::Library => {
+            Key::Delete => {
                 let in_trash = query::has_word(&self.query_text, "is:trash");
                 self.set_trash(!in_trash);
             }
             Key::F1 => self.modal = Some(Modal::Help),
-            Key::F5 => {
-                self.start_scan(false);
-                self.reload_library();
-            }
+            Key::F5 => self.start_scan(false),
             Key::F11 => self.set_fullscreen(!self.fullscreen),
             Key::OpenBracket => self.settings.show_left = !self.settings.show_left,
             Key::CloseBracket => self.settings.show_right = !self.settings.show_right,
@@ -2555,9 +2503,6 @@ impl App {
     }
 
     fn open_rename(&mut self) {
-        if matches!(self.view, View::Library) {
-            return;
-        }
         let ids = self.selected_ids();
         if ids.is_empty() {
             return;
@@ -2585,67 +2530,6 @@ impl App {
     fn mark(&mut self, name: &str, r: Rect) {
         self.layout.insert(name.to_string(), r);
     }
-
-    // ------------------------------------------------------------ library data
-    fn gen_dir(&self) -> PathBuf {
-        PathBuf::from(self.settings.gen_dir.trim())
-    }
-
-    fn reload_library(&mut self) {
-        let (e, f) = library::load(&self.gen_dir());
-        self.lib = e;
-        self.lib_folders = f;
-        self.lib_dirty = true;
-        self.lib_buf_key.clear();
-    }
-
-    fn ensure_lib_examples(&mut self) {
-        if self.lib_dirty {
-            self.lib_examples = library::find_examples(&self.lib, &self.db.images, &self.db.lib);
-            self.lib_dirty = false;
-        }
-    }
-
-    fn lib_meta_mut(&mut self, key: &str) -> &mut db::LibMeta {
-        self.db.lib.entry(key.to_string()).or_default()
-    }
-
-    fn lib_pin(&mut self, key: &str, ids: &[String], cover: bool) {
-        let m = self.lib_meta_mut(key);
-        for id in ids {
-            m.hidden.retain(|x| x != id);
-            if !m.pins.contains(id) {
-                m.pins.push(id.clone());
-            }
-        }
-        if cover {
-            m.cover = ids.first().cloned();
-        }
-        self.dirty = true;
-        self.lib_dirty = true;
-        let name = self.lib.iter().find(|e| e.key == key).map(|e| e.name.clone()).unwrap_or_else(|| key.to_string());
-        self.notice(trf!("{}장을 '{name}' 예시로 고정", "Pinned {} pictures as examples for '{name}'", ids.len()), false);
-    }
-
-    fn lib_unpin(&mut self, key: &str, id: &str, hide: bool) {
-        let m = self.lib_meta_mut(key);
-        m.pins.retain(|x| x != id);
-        if m.cover.as_deref() == Some(id) {
-            m.cover = None;
-        }
-        if hide && !m.hidden.iter().any(|x| x == id) {
-            m.hidden.push(id.to_string());
-        }
-        self.dirty = true;
-        self.lib_dirty = true;
-    }
-
-    fn lib_open_examples(&mut self) {
-        if let Some(k) = self.lib_sel.clone() {
-            self.set_query(format!("lib:{k}"));
-            self.view = View::Grid;
-        }
-    }
 }
 
 const HELP: &str = "단어 여러 개 = 모두 맞는 것 (AND).  앞에 - = 빼기.  a|b = 둘 중 하나.
@@ -2657,7 +2541,6 @@ preset:photoB        파일 이름 g_photoB_… 의 프리셋
 ckpt:obsess       체크포인트 이름에 들어간 글자      lora:pastel
 seed:12345        같은 시드 (체크포인트·프리셋 비교)
 folder:00001      name:003640
-lib:char/ch001_alice     사전 항목의 예시 그림
 album:여행  album:none   여행 앨범에 바로 든 그림 / 무소속(어느 앨범에도 없는 그림)
 album:여행+         여행과 그 하위 앨범들의 그림 (왼쪽 앨범을 누르면 넣어 줌)
 album:여행/바다      이름이 같은 앨범이 또 있으면 경로로   \"album:내 앨범\"  띄어쓰기는 따옴표
@@ -2678,7 +2561,7 @@ sort:new  old  name  score  seed  size  random
   Ctrl+V  열린 앨범에: Ctrl+C 한 그림은 같이 들어감(여러 앨범), Ctrl+X 한 그림은 옮겨짐
           탐색기에서 복사한 파일은 가져오기 (앨범이 열려 있으면 거기에도 넣음)
   Ctrl+E 내보내기 (업로드용: jpg·메타데이터 지움·무작위 이름·태그 붙이기)
-  Enter/Space 크게   C 비교   M 표 비교 (시드 × 프리셋)   L 사전   A 앨범   Esc 뒤로 (앨범: 한 칸 위)
+  Enter/Space 크게   C 비교   M 표 비교 (시드 × 프리셋)   A 앨범   Esc 뒤로 (앨범: 한 칸 위)
   앨범 뷰: 클릭·Enter 앨범 열기, Ctrl·Shift+클릭·빈 곳에서 끌기 = 고르기, F2 이름, Del 고른 앨범 지우기,
           Ctrl+N·빈 곳 오른쪽 클릭 새 앨범, 그림 Del = 이 앨범에서만 빼기 (마지막 앨범이면 imgr 휴지통),
             다른 앨범에 끌어 놓기·Ctrl+X → Ctrl+V 옮기기, Ctrl+↑·Alt+↑·Backspace 한 칸 위,
@@ -2698,7 +2581,6 @@ preset:photoB        preset of files named g_photoB_...
 ckpt:obsess       text contained in the checkpoint name      lora:pastel
 seed:12345        same seed (compare checkpoints / presets)
 folder:00001      name:003640
-lib:char/ch001_alice     example pictures of a Library entry
 album:trip  album:none   pictures directly in album trip / in no album at all
 album:trip+         pictures of trip and its sub-albums (clicking an album on the left puts this in)
 album:trip/sea      with the path, if another album has the same name   \"album:my trip\"  quote names with spaces
@@ -2719,7 +2601,7 @@ Keys
   Ctrl+V  into an open album: pictures copied with Ctrl+C are added too (several albums), pictures cut with Ctrl+X are moved
           files copied in Explorer are imported (and added to the open album, if any)
   Ctrl+E Export (for uploading: jpg, metadata removed, random names, add a tag)
-  Enter/Space Viewer   C compare   M table compare (seed x preset)   L Library   A Albums   Esc back (Albums: up one level)
+  Enter/Space Viewer   C compare   M table compare (seed x preset)   A Albums   Esc back (Albums: up one level)
   Album view: click / Enter opens an album, Ctrl / Shift+click / drag on empty space = select, F2 rename, Del delete selected albums,
           Ctrl+N / right click on empty space = new album, Del on a picture = remove from this album only (Trash if it was the last album),
             drag onto another album / Ctrl+X then Ctrl+V = move, Ctrl+Up / Alt+Up / Backspace = up one level,
@@ -2833,7 +2715,7 @@ impl eframe::App for App {
                 }
                 let r = panel.show(ui, |ui| {
                     ui.set_min_width(ui.available_width());
-                    if self.view == View::Library { self.ui_lib_detail(ui) } else { self.ui_right(ui) }
+                    self.ui_right(ui)
                 });
                 if !self.corner_drag {
                     self.settings.right_w = r.response.rect.width().round();
@@ -2848,7 +2730,6 @@ impl eframe::App for App {
                 View::Viewer => self.ui_viewer(ui),
                 View::Compare => self.ui_compare(ui),
                 View::Matrix => self.ui_matrix(ui),
-                View::Library => self.ui_library(ui),
             }
             if hovering_files {
                 let r = ui.max_rect();

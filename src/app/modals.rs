@@ -514,82 +514,6 @@ impl App {
                 });
                 Modal::TagDelete { tag, n }
             }
-            Modal::NewEntry { mut kind, mut name, mut text, mut from, mut error } => {
-                let mut go = false;
-                egui::Modal::new(egui::Id::new("newentry")).show(ctx, |ui| {
-                    ui.set_width(600.0);
-                    ui.heading(tr("새 사전 항목", "New Library entry"));
-                    ui.horizontal(|ui| {
-                        for k in [library::Kind::Char, library::Kind::Outfit, library::Kind::Face, library::Kind::Pose] {
-                            if ui.selectable_label(kind == k, k.label()).clicked() && kind != k {
-                                kind = k;
-                                name = library::next_name(&self.lib, k);
-                            }
-                        }
-                    });
-                    ui.horizontal(|ui| {
-                        ui.label(tr("파일 이름", "File name"));
-                        ui.add(egui::TextEdit::singleline(&mut name).desired_width(260.0));
-                        ui.label(".txt");
-                    });
-                    ui.label(egui::RichText::new(trf!("저장 위치: {}", "Saved to: {}", self.gen_dir().join(kind.folder()).display())).color(DIM).small());
-                    ui.label(tr("태그 (쉼표로 구분). 프롬프트에서 가져왔다면 이 항목에 해당하는 것만 남기고 지우세요.", "Tags (comma separated). If taken from a prompt, keep only the ones that belong to this entry."));
-                    ui.add(egui::TextEdit::multiline(&mut text).desired_width(f32::INFINITY).desired_rows(5));
-                    let cur = self.focus_img().filter(|i| !i.prompt.is_empty()).map(|i| (i.id.clone(), i.name().to_string(), i.prompt.clone()));
-                    if let Some((id, iname, prompt)) = cur {
-                        if ui.button(trf!("지금 고른 그림({iname})의 프롬프트에서 태그 가져오기", "Import tags from the prompt of the current picture ({iname})")).clicked() {
-                            text = library::tags_from_prompt(&prompt);
-                            from = Some(id);
-                        }
-                    }
-                    if let Some(id) = &from {
-                        if let Some(im) = self.img(id) {
-                            ui.label(egui::RichText::new(trf!("저장하면 {} 를 이 항목의 표지로 고정합니다.", "On save, {} is pinned as this entry's cover.", im.name())).color(DIM).small());
-                        }
-                    }
-                    if !error.is_empty() {
-                        ui.label(egui::RichText::new(&error).color(ERR));
-                    }
-                    ui.horizontal(|ui| {
-                        if ui.button(tr("만들기", "Create")).clicked() {
-                            go = true;
-                        }
-                        if ui.button(tr("취소", "Cancel")).clicked() || esc {
-                            keep = false;
-                        }
-                    });
-                });
-                if go {
-                    let fname = name.trim().trim_end_matches(".txt").to_string();
-                    let file = self.gen_dir().join(kind.folder()).join(format!("{fname}.txt"));
-                    if let Some(b) = db::bad_name(&fname) {
-                        error = b.to_string();
-                    } else if fname.ends_with('_') {
-                        error = tr("이름 뒤를 채워 주세요 (예: ch002_이름)", "Fill in the part after the underscore (e.g. ch002_name)").into();
-                    } else if file.exists() {
-                        error = tr("같은 이름의 파일이 이미 있습니다", "A file with the same name already exists").into();
-                    } else if text.trim().is_empty() {
-                        error = tr("태그를 적어 주세요", "Enter tags").into();
-                    } else {
-                        match library::write_entry(&file, text.trim()) {
-                            Ok(()) => {
-                                let key = format!("{}/{}", kind.key(), fname.to_lowercase());
-                                self.reload_library();
-                                if let Some(id) = &from {
-                                    self.lib_pin(&key, std::slice::from_ref(id), true);
-                                }
-                                self.lib_sel = Some(key);
-                                self.settings.lib_kind = kind.key().to_string();
-                                self.view = View::Library;
-                                self.notice(trf!("{} 만듦", "Created {}", file.display()), false);
-                                keep = false;
-                            }
-                            Err(e) => error = e,
-                        }
-                    }
-                }
-                Modal::NewEntry { kind, name, text, from, error }
-            }
             Modal::Settings { mut per_folder, mut ctl } => {
                 let mut go = false;
                 let mut forget: Option<Vec<String>> = None;
@@ -676,33 +600,6 @@ impl App {
                     return;
                 }
                 Modal::Settings { per_folder, ctl }
-            }
-            Modal::GenDir { mut dir } => {
-                let mut go = false;
-                egui::Modal::new(egui::Id::new("gendir")).show(ctx, |ui| {
-                    ui.set_width(600.0);
-                    ui.heading(tr("_gen 폴더", "_gen folder"));
-                    ui.label(tr("사전이 읽는 ComfyUI _gen 폴더 (topics\\char, presets 등이 있는 곳)", "The ComfyUI _gen folder the Library reads (where topics\\char, presets etc. are)"));
-                    ui.add(egui::TextEdit::singleline(&mut dir).desired_width(f32::INFINITY));
-                    ui.horizontal(|ui| {
-                        if ui.button(tr("바꾸기", "Rename")).clicked() || enter {
-                            go = true;
-                        }
-                        if ui.button(tr("취소", "Cancel")).clicked() || esc {
-                            keep = false;
-                        }
-                    });
-                });
-                if go {
-                    if PathBuf::from(dir.trim()).is_dir() {
-                        self.settings.gen_dir = dir.trim().to_string();
-                        self.reload_library();
-                        keep = false;
-                    } else {
-                        self.notice(tr("그 폴더가 없습니다", "That folder does not exist"), true);
-                    }
-                }
-                Modal::GenDir { dir }
             }
         };
         if keep {

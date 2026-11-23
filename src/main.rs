@@ -5,7 +5,6 @@ mod i18n;
 mod app;
 mod ctl;
 mod db;
-mod library;
 mod ops;
 mod query;
 mod settings;

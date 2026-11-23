@@ -1,5 +1,8 @@
 # 바뀐 것 / Changes
 
+## v0.16
+- 사전(L) 없앰: 사전 화면, `lib:` 검색, "사전 항목 만들기", "사전 예시로 고정" — removed the Library (L): its screen, the `lib:` search word and the related picture menu items
+
 ## v0.15
 - PNG 정보를 연결선 따라 읽음: UNETLoader(Anima·Flux·GGUF) 모델도 체크포인트로, 문자열 노드로 만든 프롬프트도 — reads ComfyUI info by following wires: UNETLoader / GGUF models count as checkpoints, prompts built by string nodes are found
 - 예전에 정보가 비어 있던 그림은 한 번 다시 읽음 — pictures that came out empty before are read again once

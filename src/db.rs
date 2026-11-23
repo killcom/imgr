@@ -75,19 +75,6 @@ pub struct SavedFilter {
     pub query: String,
 }
 
-/// imgr's own notes about a library entry (character / outfit / preset ...).
-/// The entry's tags stay in its text file; this only adds example pictures and a memo.
-#[derive(Serialize, Deserialize, Clone, Debug, Default)]
-#[serde(default)]
-pub struct LibMeta {
-    pub note: String,
-    /// Pictures pinned as examples (ids), first = cover unless `cover` is set.
-    pub pins: Vec<String>,
-    pub cover: Option<String>,
-    /// Pictures that matched automatically but were removed from the examples.
-    pub hidden: Vec<String>,
-}
-
 /// An album: a user-made group of pictures inside imgr (not a folder on disk).
 /// A picture can be in several albums; albums can hold sub albums.
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
@@ -110,8 +97,6 @@ pub struct Db {
     pub presets_to_albums: bool,
     /// "필터태그": named searches shown in the side panel.
     pub saved: Vec<SavedFilter>,
-    /// Library notes by entry key ("char/ch001_alice", "preset/animeA", ...).
-    pub lib: HashMap<String, LibMeta>,
     /// How PNG info was read (META_VER). Older: pictures without checkpoint or prompt are read again once.
     pub meta_ver: u32,
     /// fields written by a newer imgr: kept as they are when an older exe saves
@@ -268,7 +253,7 @@ impl Db {
     /// not `sure`) so many pictures vanished at once that it is probably a
     /// drive / folder hiccup. `sure` = a scan the user asked for (start, F5).
     /// Vanished pictures that carry nothing of the user's (no score, tag,
-    /// hand-set preset, trash mark, library pin) are forgotten outright; the
+    /// hand-set preset, trash mark) are forgotten outright; the
     /// rest stay as `missing` so their data comes back with the file.
     pub fn merge_scan(&mut self, items: Vec<ScanItem>, scan_errors: usize, sure: bool) -> MergeReport {
         let mut by_id: HashMap<String, usize> = HashMap::new();
@@ -293,28 +278,11 @@ impl Db {
                 }
             }
         }
-        let mut renamed: HashMap<String, String> = HashMap::new();
         for (i, id) in rekey {
             by_id.remove(&self.images[i].id);
-            renamed.insert(self.images[i].id.clone(), id.clone());
             self.images[i].id = id.clone();
             self.images[i].meta_read = false;
             by_id.insert(id, i);
-        }
-        if !renamed.is_empty() {
-            // library pins / covers point at ids too
-            let fix = |v: &mut String| {
-                if let Some(n) = renamed.get(v.as_str()) {
-                    *v = n.clone();
-                }
-            };
-            for m in self.lib.values_mut() {
-                m.pins.iter_mut().for_each(fix);
-                m.hidden.iter_mut().for_each(fix);
-                if let Some(c) = m.cover.as_mut() {
-                    fix(c);
-                }
-            }
         }
         let mut seen: HashSet<usize> = HashSet::new();
         let (mut new, mut moved) = (0, 0);
@@ -378,12 +346,10 @@ impl Db {
 
     /// Drop missing records that hold nothing of the user's. Returns how many.
     pub fn forget_plain_missing(&mut self) -> usize {
-        let pinned: HashSet<&str> =
-            self.lib.values().flat_map(|m| m.pins.iter().chain(m.hidden.iter()).chain(m.cover.iter())).map(|s| s.as_str()).collect();
         let plain: HashSet<String> = self
             .images
             .iter()
-            .filter(|r| r.missing && r.score == 0 && r.tags.is_empty() && r.albums.is_empty() && !r.trash && !r.preset_set && !pinned.contains(r.id.as_str()))
+            .filter(|r| r.missing && r.score == 0 && r.tags.is_empty() && r.albums.is_empty() && !r.trash && !r.preset_set)
             .map(|r| r.id.clone())
             .collect();
         if !plain.is_empty() {
@@ -500,7 +466,7 @@ impl Db {
     }
 
     /// Once: every preset becomes an album "프리셋 › <name>" holding its pictures.
-    /// The preset field itself stays (matrix / compare / 사전 still read it).
+    /// The preset field itself stays (matrix / compare still read it).
     pub fn presets_into_albums(&mut self) -> usize {
         if self.presets_to_albums {
             return 0;
@@ -1461,17 +1427,16 @@ mod tests {
     }
 
     #[test]
-    fn plain_missing_forgotten_but_pins_kept() {
+    fn plain_missing_forgotten() {
         let mut db = Db::default();
         let it = |k: usize| ScanItem { path: format!("00001/{k}.png"), id: format!("h{k}"), size: 1, mtime: 1, meta: None };
         db.merge_scan((0..5).map(it).collect(), 0, true);
         db.images[1].trash = true;
         db.images[2].preset_set = true;
-        db.lib.entry("char/x".into()).or_default().pins.push("h3".into());
         let r = db.merge_scan(Vec::new(), 0, true);
-        assert_eq!((r.gone, r.forgot), (5, 2));
+        assert_eq!((r.gone, r.forgot), (5, 3));
         let left: Vec<&str> = db.images.iter().map(|i| i.id.as_str()).collect();
-        assert_eq!(left, vec!["h1", "h2", "h3"]);
+        assert_eq!(left, vec!["h1", "h2"]);
     }
 
     #[test]

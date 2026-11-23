@@ -31,8 +31,6 @@ pub struct Settings {
     pub auto_advance: bool,
     /// Picture that had the focus when imgr was closed.
     pub last_focus: String,
-    /// ComfyUI _gen folder (library: topics/char, presets ...).
-    pub gen_dir: String,
     pub export_dir: String,
     /// "keep" | "jpg" | "png"
     pub export_fmt: String,
@@ -44,7 +42,6 @@ pub struct Settings {
     pub watch_move: bool,
     /// Matrix view columns: "preset" | "ckpt" | "lora"
     pub matrix_col: String,
-    pub lib_kind: String,
     /// Big viewer: the text lines at the top and bottom (` toggles).
     pub viewer_text: bool,
     /// Pictures per imgs sub folder (00001, 00002 ...) before new ones go to the next.
@@ -82,7 +79,6 @@ impl Default for Settings {
             show_right: true,
             auto_advance: true,
             last_focus: String::new(),
-            gen_dir: crate::library::default_gen_dir(),
             export_dir: String::new(),
             export_fmt: "jpg".into(),
             export_quality: 92,
@@ -91,7 +87,6 @@ impl Default for Settings {
             watch_dirs: Vec::new(),
             watch_move: false,
             matrix_col: "preset".into(),
-            lib_kind: String::new(),
             viewer_text: true,
             per_folder: 2000,
             kind_wf: true,

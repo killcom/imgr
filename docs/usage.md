@@ -11,7 +11,7 @@ To use another location, set the environment variable `IMGR_ROOT` to that folder
 Double-click imgr.exe. On start it reads the imgs folder, sorts out new, moved and missing pictures, and shows the list right away.
 If imgr is already running, it does not open a new window; it brings the running window to the front (via a Windows signal, no network used).
 All pictures are kept in imgs\00001, 00002 … (2000 pictures per folder; change this in ⚙ Settings at the top). imgr fills the folders by itself.
-Scores, tags, albums, filters and Library notes are saved in data\db.json (data\db.json.bak = a backup from about 10 minutes ago, data\backup = one per day for 14 days).
+Scores, tags, albums and filters are saved in data\db.json (data\db.json.bak = a backup from about 10 minutes ago, data\backup = one per day for 14 days).
 If db.json is corrupted, the broken file is kept as db.broken_<date>.json and imgr reads from a backup. If neither can be read, imgr only reads and does not save.
 Pictures are recognized by their content, so if you move or rename files inside imgs, their scores and tags follow.
 Window size and position, side panel widths and the last picture you were viewing are restored next time.
@@ -20,7 +20,7 @@ Window size and position, side panel widths and the last picture you were viewin
 ## Screen
 
 ```text
-Top: ⚙ Settings · search box · recent searches (▾) · sort · Import · ⟳   (views are Album view / Search view on the left, Viewer = Enter, Compare = C, Table compare = M, Library = L)
+Top: ⚙ Settings · search box · recent searches (▾) · sort · Import · ⟳   (views are Album view / Search view on the left, Viewer = Enter, Compare = C, Table compare = M)
 ⚙ Settings: Language (한국어 / English, changes as soon as you click) · pictures per folder · Allow script control · clear records of missing pictures
 Left: 🗂 Album view (/ = top level · album tree · Trash. You can click anywhere on a row)
       ▦ Search view (Show all · saved searches · score (N/A = no score) · hashtag · album · checkpoint · LoRA · Workflow info · folder) (click a title to collapse it)
@@ -61,7 +61,7 @@ Ctrl+wheel or the bar at the bottom right = thumbnail size.  "File name" below =
 Drag already selected pictures onto an album (in the left album list or an album on the album screen) to put them in that album (inside Album view this moves them, Ctrl = copy)
 Drag out of the window and the files are handed over as they are to Explorer, a browser upload box, etc.
   (for an unselected picture, click it once to select it, then drag. Esc while dragging = cancel)
-Right-click = menu (Viewer · Compare · score · tags · album · pin as Library example · rename · Export · copy · Show in Explorer …)
+Right-click = menu (Viewer · Compare · score · tags · album · rename · Export · copy · Show in Explorer …)
 ```
 
 ## Viewer
@@ -123,7 +123,6 @@ Ctrl+Shift+C = copy the file path as text
 score>=4  score:5  score:0 (no score)
 preset:photoB   ckpt:obsess   lora:pastel   seed:12345   folder:00001   name:003640
 is:unscored  is:untagged  is:trash  is:missing
-lib:char/ch001_alice   = example pictures of a Library entry
 album:trip  album:trip+  album:none = pictures directly in the album "trip" / pictures in "trip" and its sub-albums / pictures in no album
                      (clicking an album in Search view puts album:trip+ in the box, album:trip+|album:sea+ = either one.
                       If another album has the same name, use a path like album:trip/sea; if the name has spaces, use quotes like "album:my album".
@@ -151,22 +150,6 @@ Click a cell or use ←→ to choose it, then 1~6 = score for that cell. Double-
 Rows = seeds (pictures made from the same queue), columns = preset / checkpoint / LoRA combinations (chosen at the top).
 Only pictures visible in the current search are used → narrow the range with a search first, then press M.
 Click a cell, move with arrow keys, 1~6 score, double-click = view large. Right-click a column title = hide that column.
-```
-
-## Library (L) — characters, outfits, expressions, poses, presets and their example pictures
-
-```text
-It reads files in the ComfyUI working folder (structure below; here called the _gen folder):
-  characters topics\char\*.txt   outfits topics\outfit\*.txt   expressions topics\face\*.txt   poses/composition topics\pose\*.txt
-  presets presets\*.json   test presets presets\testing\*.json
-(Set the _gen location with "Folder…" on the Library screen. It is empty at first. A missing folder is created when you make one with "＋ New entry")
-Card = one entry. The card picture is the cover (your choice) or a highly scored example.
-Example pictures are found automatically: for a txt entry, pictures whose prompt contains (almost) all of its tags; for a preset, pictures made with that preset.
-If it cannot find them or is wrong: select a picture and right-click "Pin as Library example"; right-click an example for "Remove from examples" / "Set as cover".
-Click a card to see on the right its tags (editable and savable; the file before the change is backed up to data\lib_backup), memo and example pictures.
-"Copy tags" = copy the tags to paste into a prompt.  "Show all examples" = only examples in the list.  "Compare examples" = side by side.
-New entry: "＋ New entry" or right-click a picture and choose "Create Library entry from this picture" (takes the prompt and keeps only the needed tags).
-For presets it shows a summary of the memo, checkpoint, LoRA and face/hand redraw settings (json files are not modified).
 ```
 
 ## Albums (A) — grouping used only inside imgr (the real folders and files in imgs stay as they are)
@@ -199,7 +182,7 @@ Album view:
   When you select a picture, it is shown large at the top of the right panel.
   Typing in the search box in Album view, or clicking a filter in Search view, switches to Search view.
 "Album" in the right info panel = the albums the picture is in (click to open that album).
-Preset values themselves are read only from file names of the form g_<preset>_<number> (setting them by hand was removed) and are used only in Table compare, Compare and Library.
+Preset values themselves are read only from file names of the form g_<preset>_<number> (setting them by hand was removed) and are used only in Table compare and Compare.
 ```
 
 ## Deleting
@@ -214,7 +197,7 @@ is:missing = records of files that disappeared from imgs (only those that had a 
 ## Other
 
 ```text
-F1 = search syntax and shortcuts.  F5 = re-read imgs + re-read Library (also read automatically every 45 seconds)
+F1 = search syntax and shortcuts.  F5 = re-read imgs (also read automatically every 45 seconds)
 Ctrl+Z = undo score, tag, album and Trash changes
 ```
 
@@ -223,5 +206,5 @@ Ctrl+Z = undo score, tag, album and Trash changes
 ```text
 Off at first. Turn on ⚙ Settings "Allow script control" and from the next start imgr accepts commands on 127.0.0.1:47811, only from within this PC
 (the port is in data\ctl.port, web page requests are rejected). Setting the environment variable IMGR_CTL=1 also opens it, for that run only.
-With tools\imgr_ctl.py you can send search, selection, score, tag, Library, screen capture and mouse/key input, and every command is processed in the same order as the user's clicks.
+With tools\imgr_ctl.py you can send search, selection, score, tag, screen capture and mouse/key input, and every command is processed in the same order as the user's clicks.
 ```

@@ -9,3 +9,7 @@
 
 *.exe
 *.pdb
+
+# the owner's own deploy scripts and notes (paths of this PC)
+/deploy/
+/NOTES.md

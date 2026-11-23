@@ -8,7 +8,6 @@
 //!   seed:12345      folder:00001    name:003640
 //!   is:trash  is:missing  is:scored  is:unscored  is:tagged  is:untagged
 //!   sort:new  sort:old  sort:name  sort:score  sort:seed  sort:size  sort:random
-//!   lib:char/ch001_alice   examples of a library entry
 //!   album:3         pictures directly in album 3 (ids: see the album list); album:none = in no album
 //!   anything else   found in prompt, file name, tags, preset or checkpoint
 //! Pictures in the trash (or missing) are hidden unless asked for with is:trash / is:missing.
@@ -26,8 +25,6 @@ enum Atom {
     Folder(String),
     Name(String),
     Is(String),
-    /// examples of a library entry (lib:char/ch001_alice)
-    Lib(String),
     /// album:3 (Some(3)) / album:none (None) / album:top (Some(0) = the album view's top: pictures in no album)
     Album(Option<u32>),
     /// album:3+ = album 3 and all its sub albums
@@ -147,8 +144,6 @@ pub struct Query {
     pub sort: Option<Sort>,
     show_trash: bool,
     show_missing: bool,
-    /// Picture ids of library entries used by lib: words (filled in by the app).
-    pub lib: std::collections::HashMap<String, std::collections::HashSet<String>>,
     /// album:3+ -> album 3 and its sub albums (filled in by the app).
     pub trees: std::collections::HashMap<u32, std::collections::HashSet<u32>>,
 }
@@ -266,7 +261,6 @@ fn parse_atom(w: &str) -> Option<Atom> {
             "folder" => Atom::Folder(v),
             "name" => Atom::Name(v),
             "is" => Atom::Is(v),
-            "lib" => Atom::Lib(v),
             "album" | "앨범" => return album_atoms(&v).into_iter().next(),
             _ => Atom::Text(lw),
         });
@@ -320,19 +314,6 @@ impl Query {
         self.terms.iter().flat_map(|t| t.any.iter()).filter_map(|a| if let Atom::AlbumTree(x) = a { Some(*x) } else { None }).collect()
     }
 
-    /// Library entry keys named by lib: words.
-    pub fn lib_keys(&self) -> Vec<String> {
-        let mut v = Vec::new();
-        for t in &self.terms {
-            for a in &t.any {
-                if let Atom::Lib(k) = a {
-                    v.push(k.clone());
-                }
-            }
-        }
-        v
-    }
-
     pub fn matches(&self, i: &Img) -> bool {
         if i.trash && !self.show_trash {
             return false;
@@ -347,7 +328,6 @@ impl Query {
 fn atom(a: &Atom, i: &Img, q: &Query) -> bool {
     match a {
         Atom::Tag(t) => i.tags.iter().any(|x| x == t),
-        Atom::Lib(k) => q.lib.get(k).is_some_and(|s| s.contains(&i.id)),
         Atom::Time { mtime, lo, hi } => {
             let t = if *mtime { i.mtime as i64 } else { i.added };
             t >= *lo && t < *hi

@@ -66,13 +66,12 @@ data\           기록: db.json(점수·태그·앨범…), settings.json, 썸�
 |---|---|
 | `src/db.rs` | 기록, 폴더 읽기·맞추기, 가져오기, 이름 바꾸기, PNG/ComfyUI 정보 |
 | `src/query.rs` | 검색 문법, 정렬 (단위 시험 포함) |
-| `src/library.rs` | 사전: ComfyUI 작업 폴더의 캐릭터·의상·표정·포즈·프리셋 파일 |
 | `src/ops.rs` | 내보내기, 지켜보는 폴더 |
 | `src/winshell.rs` | Win32: 파일 클립보드, 끌어 내보내기, 탐색기에서 보기, 창 하나만 |
 | `src/thumbs.rs` | 썸네일 읽기·디스크 캐시 |
 | `src/ctl.rs` | 조작 명령 받기 (localhost HTTP) |
 | `src/i18n.rs` | 화면 언어 (한국어 / English) |
-| `src/app.rs`, `src/app/` | 화면과 동작 (위·왼쪽·오른쪽 칸, 그리드, 앨범 뷰, 크게 보기·비교, 사전, 창들) |
+| `src/app.rs`, `src/app/` | 화면과 동작 (위·왼쪽·오른쪽 칸, 그리드, 앨범 뷰, 크게 보기·비교, 창들) |
 
 단위 시험: `cargo test`
 

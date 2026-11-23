@@ -99,11 +99,10 @@ impl App {
             if r.clicked() {
                 self.modal = Some(Modal::Import { dir: self.settings.import_dir.clone(), mv: self.settings.import_move, watch_new: String::new() });
             }
-            let r = ui.button("⟳").on_hover_text(tr("imgs·사전 다시 읽기 (F5)", "Rescan imgs and Library (F5)"));
+            let r = ui.button("⟳").on_hover_text(tr("imgs 다시 읽기 (F5)", "Rescan imgs (F5)"));
             self.mark("rescan", r.rect);
             if r.clicked() {
                 self.start_scan(false);
-                self.reload_library();
             }
             // measured only while everything is on one row
             let w = (r.rect.right() - search_right).max(200.0);
@@ -595,15 +594,6 @@ Right-click: empty Trash"));
                         if ui.small_button(tr("복사", "Copy")).clicked() {
                             ui.ctx().copy_text(im.prompt.clone());
                         }
-                        if ui.small_button(tr("이 그림으로 사전 항목 만들기", "Create Library entry from this picture")).clicked() {
-                            self.modal = Some(Modal::NewEntry {
-                                kind: library::Kind::Outfit,
-                                name: library::next_name(&self.lib, library::Kind::Outfit),
-                                text: library::tags_from_prompt(&im.prompt),
-                                from: Some(im.id.clone()),
-                                error: String::new(),
-                            });
-                        }
                     });
                 });
             }
@@ -801,17 +791,6 @@ Right-click: empty Trash"));
                 }
                 if !im.preset.is_empty() && ui.button(tr("같은 프리셋", "Same preset")).clicked() {
                     nq = Some(format!("preset:{}", im.preset));
-                }
-                if !im.preset.is_empty() {
-                    let key = format!("preset/{}", im.preset.to_lowercase());
-                    let tk = format!("testpreset/{}", im.preset.to_lowercase());
-                    let k = if self.lib.iter().any(|e| e.key == key) { Some(key) } else if self.lib.iter().any(|e| e.key == tk) { Some(tk) } else { None };
-                    if let Some(k) = k {
-                        if ui.button(tr("프리셋 사전", "Preset Library")).on_hover_text(tr("이 프리셋의 설정과 예시 그림", "This preset's settings and example pictures")).clicked() {
-                            self.lib_sel = Some(k);
-                            self.view = View::Library;
-                        }
-                    }
                 }
             });
             // albums of this picture: click = open that album

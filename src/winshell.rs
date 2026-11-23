@@ -1,6 +1,6 @@
 //! Small Windows shell helpers: file clipboard (like Explorer's Ctrl+C/V),
 //! dragging files out to other programs, showing several files selected in
-//! Explorer, and reading old cp949 text files.
+//! Explorer.
 
 use std::path::{Path, PathBuf};
 
@@ -96,29 +96,6 @@ pub fn reveal(paths: &[PathBuf]) {
 
 pub fn open_file(p: &Path) {
     let _ = std::process::Command::new("explorer").arg(p).spawn();
-}
-
-/// Text file as UTF-8, falling back to the Korean ANSI code page (cp949).
-pub fn read_text(p: &Path) -> Option<String> {
-    let b = std::fs::read(p).ok()?;
-    let b = b.strip_prefix(&[0xEF, 0xBB, 0xBF][..]).unwrap_or(&b);
-    if let Ok(s) = std::str::from_utf8(b) {
-        return Some(s.to_string());
-    }
-    Some(cp949(b))
-}
-
-fn cp949(b: &[u8]) -> String {
-    use windows::Win32::Globalization::{MULTI_BYTE_TO_WIDE_CHAR_FLAGS, MultiByteToWideChar};
-    unsafe {
-        let n = MultiByteToWideChar(949, MULTI_BYTE_TO_WIDE_CHAR_FLAGS(0), b, None);
-        if n <= 0 {
-            return String::from_utf8_lossy(b).into_owned();
-        }
-        let mut w = vec![0u16; n as usize];
-        MultiByteToWideChar(949, MULTI_BYTE_TO_WIDE_CHAR_FLAGS(0), b, Some(&mut w));
-        String::from_utf16_lossy(&w)
-    }
 }
 
 /// Is a mouse button physically held right now? (Either button: the user's

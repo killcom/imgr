@@ -65,13 +65,12 @@ data\           records: db.json (scores, tags, albums…), settings.json, thumb
 |---|---|
 | `src/db.rs` | records, reading and syncing the folder, import, rename, PNG / ComfyUI info |
 | `src/query.rs` | search language, sorting (with unit tests) |
-| `src/library.rs` | Library: character / outfit / expression / pose / preset files of a ComfyUI work folder |
 | `src/ops.rs` | export, watched folders |
 | `src/winshell.rs` | Win32: file clipboard, drag out, Show in Explorer, single window |
 | `src/thumbs.rs` | thumbnail loading and disk cache |
 | `src/ctl.rs` | script control (localhost HTTP) |
 | `src/i18n.rs` | screen language (Korean / English) |
-| `src/app.rs`, `src/app/` | the screen and its actions (top bar, side panels, grid, album view, viewer, compare, library, dialogs) |
+| `src/app.rs`, `src/app/` | the screen and its actions (top bar, side panels, grid, album view, viewer, compare, dialogs) |
 
 Unit tests: `cargo test`
 

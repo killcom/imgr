@@ -9,10 +9,10 @@ use serde_json::{Value, json};
 use super::*;
 
 pub(super) const CMDS: &str = "state query{q} list{limit} select{ids|index|all} score{n} tag{add,remove} trash{on} undo \
-view{mode:grid|viewer|compare|matrix|library|albums,zoom,center} key{key,ctrl,shift} press{key,ctrl,shift,alt} type{text} \
+view{mode:grid|viewer|compare|matrix|albums,zoom,center} key{key,ctrl,shift} press{key,ctrl,shift,alt} type{text} \
 mouse{op:move|click|dblclick|right|down|up|drag,x,y,to:[x,y],steps,ctrl,shift} wheel{x,y,dy,ctrl} \
 thumb{size} window{w,h} layout screenshot{path} rescan import{from,move} save_filter{name,q} notice{text} \
-albums album_new{name,parent} album_rename{id,name} album_delete{id} album_sel{ids,only} album_put{id|none} album_open{id|none|top} drop{files} lib{kind} lib_show{key} rename{name|pattern,start|upload} export{dir,fmt,quality,upload,tag} panel{show_left,show_right} \
+albums album_new{name,parent} album_rename{id,name} album_delete{id} album_sel{ids,only} album_put{id|none} album_open{id|none|top} drop{files} rename{name|pattern,start|upload} export{dir,fmt,quality,upload,tag} panel{show_left,show_right} \
 modal{close} focus save quit";
 
 fn img_json(i: &Img) -> Value {
@@ -35,8 +35,6 @@ fn modal_name(m: &Option<Modal>) -> Option<&'static str> {
         Modal::AlbumRename { .. } => "album_rename",
         Modal::AlbumNew { .. } => "album_new",
         Modal::AlbumDelete { .. } => "album_delete",
-        Modal::NewEntry { .. } => "new_entry",
-        Modal::GenDir { .. } => "gen_dir",
         Modal::Settings { .. } => "settings",
     })
 }
@@ -181,7 +179,6 @@ impl App {
                             self.back_view = View::Grid;
                             self.view = View::Matrix;
                         }
-                        Some("library") => self.view = View::Library,
                         Some("albums") => self.view = View::Albums,
                         _ => {}
                     }
@@ -301,7 +298,6 @@ impl App {
                 }
                 "rescan" => {
                     self.start_scan(false);
-                    self.reload_library();
                     Some(json!({"ok": true}))
                 }
                 "import" => match s("from") {
@@ -398,34 +394,6 @@ impl App {
                 "notice" => {
                     self.notice(s("text").unwrap_or_default(), false);
                     Some(json!({"ok": true}))
-                }
-                "lib" => {
-                    self.ensure_lib_examples();
-                    let kind = s("kind");
-                    let v: Vec<Value> = self
-                        .lib
-                        .iter()
-                        .filter(|e| kind.as_deref().is_none_or(|k| e.kind.key() == k))
-                        .map(|e| {
-                            json!({"key": e.key, "kind": e.kind.key(), "name": e.name, "file": e.file.display().to_string(),
-                                   "tags": e.tags.len(), "examples": self.lib_examples.get(&e.key).map(|v| v.len()).unwrap_or(0),
-                                   "summary": e.summary})
-                        })
-                        .collect();
-                    let f: Vec<Value> = self.lib_folders.iter().map(|f| json!([f.kind.key(), f.path.display().to_string(), f.exists])).collect();
-                    Some(json!({"ok": true, "gen_dir": self.settings.gen_dir, "entries": v, "folders": f}))
-                }
-                "lib_show" => {
-                    let key = s("key").unwrap_or_default().to_lowercase();
-                    match self.lib.iter().find(|e| e.key == key) {
-                        Some(e) => {
-                            self.settings.lib_kind = e.kind.key().to_string();
-                            self.lib_sel = Some(key);
-                            self.view = View::Library;
-                            Some(self.state_json())
-                        }
-                        None => Some(json!({"ok": false, "error": "no such entry (see lib)"})),
-                    }
                 }
                 "rename" => {
                     let ids = self.selected_ids();
@@ -568,8 +536,6 @@ impl App {
             "window": [self.window_size.x, self.window_size.y],
             "panels": {"left": self.settings.show_left.then_some(self.settings.left_w), "right": self.settings.show_right.then_some(self.settings.right_w)},
             "fullscreen": self.fullscreen,
-            "lib_sel": self.lib_sel,
-            "lib_count": self.lib.len(),
             "tag_input": self.tag_input,
             "trash_n": self.trash_n, "missing_n": self.missing_n,
             "watch": self.settings.watch_dirs,
