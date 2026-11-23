@@ -1708,7 +1708,13 @@ impl App {
             Some(a) => {
                 // a picture in no album already sits at the top
                 let todo: Vec<String> = ids.iter().filter(|id| self.img(id).is_some_and(|i| !i.albums.contains(&a) && !(a == 0 && i.albums.is_empty()))).cloned().collect();
-                self.edit(&todo, &trf!("앨범 '{name}'에 넣기", "Add to album '{name}'"), |im| im.albums.push(a));
+                self.edit(&todo, &trf!("앨범 '{name}'에 넣기", "Add to album '{name}'"), |im| {
+                    // a copy: a picture in no album sits at the top, and stays there too
+                    if im.albums.is_empty() && a != 0 {
+                        im.albums.push(0);
+                    }
+                    im.albums.push(a);
+                });
                 todo.len()
             }
             None => {
@@ -1894,12 +1900,13 @@ impl App {
     }
 
     fn take_out_here(&mut self, ids: &[String], x: u32) {
-        let only_here = |i: &Img| i.albums.iter().all(|&a| a == x || a == 0);
+        // x = 0 (the top): a picture in no album is only there too
+        let only_here = |i: &Img| i.albums.iter().all(|&a| a == x);
         let last = ids.iter().filter(|id| self.img(id).is_some_and(|i| only_here(i))).count();
         let n = ids.len();
         let name = self.album_label(Some(x));
         self.edit(ids, &trf!("'{name}'에서 빼기", "Remove from '{name}'"), |im| {
-            if im.albums.iter().all(|&a| a == x || a == 0) {
+            if im.albums.iter().all(|&a| a == x) {
                 im.trash = true;
             } else {
                 im.albums.retain(|&a| a != x);

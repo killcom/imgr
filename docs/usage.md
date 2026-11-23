@@ -168,7 +168,7 @@ There are two ways to view:
               It filters together with other filters (score, tag, checkpoint…)
 Album view:
   The top level (/) shows the top-level albums, then the pictures put at the top and those in no album (No album).
-  The top holds pictures like an album: a picture in Album1 can sit at the top too. Inside an album, sub-album cells come first, then that album's pictures. Clicking the gap between cells does nothing.
+  The top holds pictures like an album: a picture in Album1 can sit at the top too. Copying a top picture into an album (Ctrl+C, Ctrl+drag, right-click → Album) keeps it at the top. Inside an album, sub-album cells come first, then that album's pictures. Clicking the gap between cells does nothing.
   New album: Ctrl+N, or right-click an empty area → "New album…" (inside an album it makes a sub-album, at the top level a top-level album).
            It is created only when you enter a name and press 'Create' (if you cancel, nothing is created). "＋ New album" at the top does the same.
   Click an album cell = open it right away.

@@ -1,5 +1,8 @@
 # 바뀐 것 / Changes
 
+## v0.27
+- 맨 위(/)에 있던 그림을 앨범에 복사해 넣으면 맨 위에도 그대로 남음 (그 앨범에서 Del = 앨범에서만 빠지고 맨 위에 남음). 옮기기(Ctrl+X, 그냥 끌어 놓기)는 맨 위에서 빠짐 — Copying a picture from the top (/) into an album keeps it at the top too (Del in that album only takes it out of the album). Moving (Ctrl+X, plain drag) takes it off the top
+
 ## v0.26
 - 앨범 뷰의 맨 위(/)도 앨범처럼 그림을 둘 수 있음: 앨범에 든 그림을 맨 위에도 같이 (Ctrl+V, 끌어 놓기, 오른쪽 클릭 → 앨범 → / (맨 위)). 맨 위에서 Del = 맨 위에서만 빼기 — The Album view's top (/) holds pictures like an album: a picture in an album can sit at the top too (Ctrl+V, drag and drop, right-click → Album → / (top)). Del at the top removes it from the top only
 
