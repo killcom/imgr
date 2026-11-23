@@ -73,7 +73,7 @@ impl App {
                     act = Some(HeadAct::Rename(id));
                 }
             }
-            ui.label(egui::RichText::new(tr("클릭 열기 · Ctrl+클릭 고르기 · 끌어 놓기 = 옮기기(Ctrl: 복사) · Ctrl+N 새 앨범 · Del 이 앨범에서 빼기 · Ctrl+↑ 위로", "Click: open · Ctrl+click: select · Drag and drop = move (Ctrl: copy) · Ctrl+N new album · Del remove from this album · Ctrl+↑ up")).color(DIM).small());
+            ui.label(egui::RichText::new(trf!("클릭 열기 · Ctrl+클릭 고르기 · 끌어 놓기 = 옮기기(Ctrl: 복사) · Ctrl+N 새 앨범 · {0} 이 앨범에서 빼기 · {1} 휴지통 · Ctrl+↑ 위로", "Click: open · Ctrl+click: select · Drag and drop = move (Ctrl: copy) · Ctrl+N new album · {0} remove from this album · {1} Trash · Ctrl+↑ up", self.del_keys().0, self.del_keys().1)).color(DIM).small());
         });
         ui.add_space(4.0);
 

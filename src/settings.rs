@@ -54,6 +54,8 @@ pub struct Settings {
     pub ctl: bool,
     /// [AND | OR] left of the search box: how a click in 검색 뷰 adds its item.
     pub search_or: bool,
+    /// Del and Shift+Del swapped (Del = to the imgr Trash, Shift+Del = out of this album only).
+    pub del_swap: bool,
     /// Screen language: "ko" or "en" (first start: the language of Windows).
     pub lang: String,
 }
@@ -94,6 +96,7 @@ impl Default for Settings {
             kind_wf: true,
             kind_plain: false,
             search_or: false,
+            del_swap: false,
             ctl: false,
             lang: crate::i18n::system_lang(),
         }

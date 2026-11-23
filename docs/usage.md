@@ -178,6 +178,9 @@ Album view:
   Del: selected pictures = removed from this album only (those in other albums stay there).
        If this album is the picture's last album, it goes to the imgr Trash (restore with Del in is:trash or Ctrl+Z).
        selected albums = delete the album (after asking). Only the album disappears, the pictures stay, and sub-albums move up one level.
+  Shift+Del: selected pictures = to the imgr Trash (gone from every album; Ctrl+Z or Restore puts them back in their albums).
+        selected albums = delete them with their sub-albums and pictures (after asking). Pictures go to the imgr Trash; the albums do not come back.
+  "Swap Del and Shift+Del" in Settings swaps the two keys.
   Moving: drag pictures or albums onto another album (cell · path at the top · left Album view) = they leave this album and move there
           (for pictures, dropping while holding Ctrl copies = they stay in this album too. Album cells can be dragged right away without selecting them)
           or Ctrl+X → open the destination and Ctrl+V.  Dropping on "🗂 Album" at the top or / on the left / Ctrl+V at the top level = move to the top level (pictures leave this album).

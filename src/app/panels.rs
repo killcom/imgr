@@ -363,7 +363,7 @@ Both on = all, only one on = just those (not applied in Album view)"));
                     let name = self.album_label(Some(id));
                     self.modal = Some(Modal::AlbumRename { id, new: name });
                 }
-                LeftAction::DeleteAlbum(id) => self.modal = Some(Modal::AlbumDelete { ids: vec![id] }),
+                LeftAction::DeleteAlbum(id) => self.modal = Some(Modal::AlbumDelete { ids: vec![id], with_pics: false }),
                 LeftAction::MoveAlbum(id, parent) => {
                     if self.db.move_album(id, parent) {
                         self.dirty = true;
@@ -540,7 +540,7 @@ Right-click: empty Trash"));
                     ui.label(trf!("📁 {}  —  {n}장{}", "📁 {}  —  {n} pictures{}", self.db.album_path(*id), if kids > 0 { trf!(" · 앨범 {kids}", " · {kids} albums") } else { String::new() }));
                 }
                 ui.add_space(6.0);
-                ui.label(egui::RichText::new(tr("Enter 열기 · F2 이름 · Del 지우기 · 다른 앨범에 끌어 놓기 / Ctrl+X → Ctrl+V 옮기기", "Enter open · F2 rename · Del delete · drag onto another album / Ctrl+X → Ctrl+V to move")).color(DIM).small());
+                ui.label(egui::RichText::new(trf!("Enter 열기 · F2 이름 · {0} 지우기 · {1} 그림까지 지우기 · 다른 앨범에 끌어 놓기 / Ctrl+X → Ctrl+V 옮기기", "Enter open · F2 rename · {0} delete · {1} delete with pictures · drag onto another album / Ctrl+X → Ctrl+V to move", self.del_keys().0, self.del_keys().1)).color(DIM).small());
                 return;
             }
             if ids.is_empty() {

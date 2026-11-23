@@ -453,7 +453,7 @@ impl App {
                 }
                 Modal::AlbumNew { parent, new, put }
             }
-            Modal::AlbumDelete { mut ids } => {
+            Modal::AlbumDelete { mut ids, with_pics } => {
                 let mut go = false;
                 ids.retain(|&id| self.db.album(id).is_some());
                 if ids.is_empty() {
@@ -461,6 +461,9 @@ impl App {
                 }
                 let names: Vec<String> = ids.iter().map(|&id| self.db.album_path(id)).collect();
                 let n: usize = ids.iter().map(|id| self.album_counts.get(id).copied().unwrap_or(0)).sum();
+                // with_pics: every picture in these albums or their sub albums (each once)
+                let tree: std::collections::HashSet<u32> = ids.iter().flat_map(|&id| self.db.album_subtree(id)).collect();
+                let n_all = self.db.images.iter().filter(|i| !i.missing && !i.trash && i.albums.iter().any(|a| tree.contains(a))).count();
                 let kids: usize = ids.iter().map(|&id| self.db.album_children(id).iter().filter(|k| !ids.contains(&k.id)).count()).sum();
                 egui::Modal::new(egui::Id::new("albumdel")).show(ctx, |ui| {
                     if names.len() == 1 {
@@ -474,9 +477,15 @@ impl App {
                             ui.label(egui::RichText::new(trf!("… 외 {}개", "… and {} more", names.len() - 8)).color(DIM));
                         }
                     }
-                    ui.label(trf!("앨범만 없어집니다. 그림 {n}장은 지워지지 않고 앨범에서만 빠집니다.", "Only the album is removed. The {n} pictures are not deleted, just taken out of the album."));
-                    if kids > 0 {
-                        ui.label(trf!("하위 앨범 {kids}개는 한 칸 위로 올라갑니다.", "The {kids} sub-albums move up one level."));
+                    if with_pics {
+                        let subs = tree.len() - ids.len();
+                        ui.label(egui::RichText::new(trf!("앨범{0}과 그 안의 그림 {n_all}장을 지웁니다. 그림은 imgr 휴지통으로 가서 다른 앨범에서도 안 보입니다.", "Deletes the album{0} and the {n_all} pictures in it. The pictures go to the imgr Trash and disappear from other albums too.", if subs > 0 { trf!(" (하위 앨범 {subs}개 포함)", "s (with {subs} sub-albums)") } else { String::new() })).color(ERR));
+                        ui.label(egui::RichText::new(tr("그림은 Ctrl+Z 또는 휴지통에서 되살릴 수 있지만, 지운 앨범은 돌아오지 않습니다.", "Pictures can be restored with Ctrl+Z or from the Trash, but the deleted albums do not come back.")).color(DIM).small());
+                    } else {
+                        ui.label(trf!("앨범만 없어집니다. 그림 {n}장은 지워지지 않고 앨범에서만 빠집니다.", "Only the album is removed. The {n} pictures are not deleted, just taken out of the album."));
+                        if kids > 0 {
+                            ui.label(trf!("하위 앨범 {kids}개는 한 칸 위로 올라갑니다.", "The {kids} sub-albums move up one level."));
+                        }
                     }
                     ui.horizontal(|ui| {
                         if ui.button(tr("지우기", "Clear")).clicked() || enter {
@@ -487,7 +496,11 @@ impl App {
                         }
                     });
                 });
-                if go {
+                if go && with_pics {
+                    let (na, np) = self.delete_albums_with_pictures(&ids);
+                    self.notice(trf!("앨범 {na}개 지움, 그림 {np}장 imgr 휴지통으로 (그림은 Ctrl+Z 되돌리기)", "Deleted {na} albums, {np} pictures to the imgr Trash (Ctrl+Z restores the pictures)"), false);
+                    keep = false;
+                } else if go {
                     for &id in &ids {
                         self.delete_album(id);
                     }
@@ -496,7 +509,7 @@ impl App {
                     }
                     keep = false;
                 }
-                Modal::AlbumDelete { ids }
+                Modal::AlbumDelete { ids, with_pics }
             }
             Modal::TagDelete { tag, n } => {
                 egui::Modal::new(egui::Id::new("tagdel")).show(ctx, |ui| {
@@ -545,6 +558,19 @@ impl App {
                         egui::RichText::new(tr("가져온 그림은 imgs\\00001 같은 번호 폴더에 들어가고, 이 수만큼 차면 다음 번호 폴더(00002 …)에 넣기 시작합니다. 이미 넣은 그림은 옮기지 않습니다.", "Imported pictures go into numbered folders like imgs\\00001; when one holds this many, the next folder (00002 …) is started. Pictures already placed are not moved."))
                             .color(DIM)
                             .small(),
+                    );
+                    ui.add_space(8.0);
+                    ui.separator();
+                    let r = ui.checkbox(&mut self.settings.del_swap, tr("Del 과 Shift+Del 을 서로 바꾸기", "Swap Del and Shift+Del"));
+                    self.mark("set_del_swap", r.rect);
+                    ui.label(
+                        egui::RichText::new(if self.settings.del_swap {
+                            tr("지금: Del = imgr 휴지통 (모든 앨범에서 안 보임) · 앨범은 그림까지 / Shift+Del = 이 앨범에서만 빼기 · 앨범만 지우기", "Now: Del = imgr Trash (gone from every album) · albums with their pictures / Shift+Del = out of this album only · album only")
+                        } else {
+                            tr("지금: Del = 이 앨범에서만 빼기 · 앨범만 지우기 / Shift+Del = imgr 휴지통 (모든 앨범에서 안 보임) · 앨범은 그림까지", "Now: Del = out of this album only · album only / Shift+Del = imgr Trash (gone from every album) · albums with their pictures")
+                        })
+                        .color(DIM)
+                        .small(),
                     );
                     ui.add_space(8.0);
                     ui.separator();

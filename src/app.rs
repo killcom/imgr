@@ -106,7 +106,8 @@ enum Modal {
     AlbumRename { id: u32, new: String },
     /// a new album under `parent` (0 = top); made only on 만들기. `put`: pictures to put in it
     AlbumNew { parent: u32, new: String, put: Vec<String> },
-    AlbumDelete { ids: Vec<u32> },
+    /// with_pics: the albums' pictures (sub albums too) go to the imgr Trash as well
+    AlbumDelete { ids: Vec<u32>, with_pics: bool },
     /// ⚙ 설정
     Settings { per_folder: String, ctl: bool },
 }
@@ -1845,20 +1846,50 @@ impl App {
     /// Del in the album view: pictures leave only the album shown; one that is
     /// in no other album goes to the imgr trash (keeping its album, so 되살리기
     /// brings it back here). Selected albums: ask, then delete them.
-    fn delete_in_album_view(&mut self) {
+    /// `strong` (Shift+Del, or Del when swapped in ⚙): pictures go to the imgr Trash (gone from
+    /// every album), albums are deleted with their pictures. Otherwise pictures leave only this
+    /// album and albums are deleted with their pictures kept.
+    fn delete_in_album_view(&mut self, strong: bool) {
         let ids = self.picked_pictures();
         if !ids.is_empty() {
             match self.cur_album() {
-                Some(Some(x)) => self.take_out_here(&ids, x),
-                // 무소속: these are in no album, so straight to the trash
+                Some(Some(x)) if !strong => self.take_out_here(&ids, x),
+                // 무소속 (in no album) or Shift+Del: straight to the trash
                 _ => self.set_trash(true),
             }
         }
         if !self.album_sel.is_empty() {
             let mut a: Vec<u32> = self.album_sel.iter().copied().collect();
             a.sort_unstable();
-            self.modal = Some(Modal::AlbumDelete { ids: a });
+            self.modal = Some(Modal::AlbumDelete { ids: a, with_pics: strong });
         }
+    }
+
+    /// Key names of (take out of this album / to the trash) as set in ⚙.
+    pub(super) fn del_keys(&self) -> (&'static str, &'static str) {
+        if self.settings.del_swap { ("Shift+Del", "Del") } else { ("Del", "Shift+Del") }
+    }
+
+    /// Delete albums with everything in them: the albums and their sub albums go, the
+    /// pictures in any of them go to the imgr Trash (Ctrl+Z brings the pictures back).
+    pub(super) fn delete_albums_with_pictures(&mut self, ids: &[u32]) -> (usize, usize) {
+        let mut tree: std::collections::HashSet<u32> = std::collections::HashSet::new();
+        for &id in ids {
+            tree.extend(self.db.album_subtree(id));
+        }
+        let pics: Vec<String> = self.db.images.iter().filter(|i| !i.missing && !i.trash && i.albums.iter().any(|a| tree.contains(a))).map(|i| i.id.clone()).collect();
+        let t = tree.clone();
+        self.edit(&pics, tr("앨범과 함께 휴지통으로", "To Trash with the album"), move |im| {
+            im.trash = true;
+            im.albums.retain(|a| !t.contains(a));
+        });
+        for &id in &tree {
+            self.delete_album(id);
+        }
+        self.album_sel.clear();
+        self.sel.clear();
+        self.refilter(true);
+        (tree.len(), pics.len())
     }
 
     /// Pictures moved to the album view's top: they leave album `f` (and show at
@@ -2496,7 +2527,7 @@ impl App {
             }
             Key::F2 => self.open_rename(),
             Key::Slash => self.focus_search = true,
-            Key::Delete if self.view == View::Albums => self.delete_in_album_view(),
+            Key::Delete if self.view == View::Albums => self.delete_in_album_view(m.shift != self.settings.del_swap),
             Key::N if m.ctrl && self.view == View::Albums => self.new_album_here(),
             Key::Delete => {
                 let in_trash = query::has_word(&self.query_text, "is:trash");
@@ -2575,8 +2606,10 @@ Ctrl+클릭 = 그 종류는 이것만.  오른쪽 클릭 = 메뉴.
           탐색기에서 복사한 파일은 가져오기 (앨범이 열려 있으면 거기에도 넣음)
   Ctrl+E 내보내기 (업로드용: jpg·메타데이터 지움·무작위 이름·태그 붙이기)
   Enter/Space 크게   C 비교   M 표 비교 (시드 × 프리셋)   A 앨범   Esc 뒤로 (앨범: 한 칸 위)
-  앨범 뷰: 클릭·Enter 앨범 열기, Ctrl·Shift+클릭·빈 곳에서 끌기 = 고르기, F2 이름, Del 고른 앨범 지우기,
+  앨범 뷰: 클릭·Enter 앨범 열기, Ctrl·Shift+클릭·빈 곳에서 끌기 = 고르기, F2 이름,
+          Del 고른 앨범 지우기 (그림은 그대로), Shift+Del 앨범과 안의 그림까지 (그림은 imgr 휴지통),
           Ctrl+N·빈 곳 오른쪽 클릭 새 앨범, 그림 Del = 이 앨범에서만 빼기 (마지막 앨범이면 imgr 휴지통),
+          그림 Shift+Del = imgr 휴지통 (모든 앨범에서 안 보임).  ⚙ 설정에서 Del ↔ Shift+Del 바꿀 수 있음,
             다른 앨범에 끌어 놓기·Ctrl+X → Ctrl+V 옮기기, Ctrl+↑·Alt+↑·Backspace 한 칸 위,
             방향키·PageUp/Down·Home/End = 앨범 칸과 그림을 한 줄로 이동
   ←→↑↓ 이동 (Shift 범위)   Ctrl+A 모두   빈 곳에서 끌기 = 여러 장 고르기
@@ -2618,8 +2651,10 @@ Keys
           files copied in Explorer are imported (and added to the open album, if any)
   Ctrl+E Export (for uploading: jpg, metadata removed, random names, add a tag)
   Enter/Space Viewer   C compare   M table compare (seed x preset)   A Albums   Esc back (Albums: up one level)
-  Album view: click / Enter opens an album, Ctrl / Shift+click / drag on empty space = select, F2 rename, Del delete selected albums,
+  Album view: click / Enter opens an album, Ctrl / Shift+click / drag on empty space = select, F2 rename,
+          Del deletes selected albums (pictures kept), Shift+Del deletes them with their pictures (pictures to the imgr Trash),
           Ctrl+N / right click on empty space = new album, Del on a picture = remove from this album only (Trash if it was the last album),
+          Shift+Del on a picture = imgr Trash (gone from every album).  Del and Shift+Del can be swapped in Settings,
             drag onto another album / Ctrl+X then Ctrl+V = move, Ctrl+Up / Alt+Up / Backspace = up one level,
             arrow keys / PageUp/Down / Home/End = move through album cells and pictures as one line
   Arrows move (Shift = range)   Ctrl+A all   drag on empty space = select several

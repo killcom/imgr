@@ -1,5 +1,10 @@
 # 바뀐 것 / Changes
 
+## v0.25
+- 앨범 뷰 Shift+Del: 그림은 imgr 휴지통으로 (모든 앨범에서 안 보임), 앨범은 하위 앨범·안의 그림까지 (그림은 휴지통) — Shift+Del in Album view: pictures go to the imgr Trash (gone from every album); albums are deleted with their sub-albums and pictures (pictures to the Trash)
+- ⚙ 설정에서 Del ↔ Shift+Del 바꾸기 — Settings can swap Del and Shift+Del
+- 휴지통 그림에 붙던 빨간 '휴지통' 글씨와 흐림 없앰 — pictures in the Trash are no longer dimmed and labelled
+
 ## v0.24
 - 창 제목은 판 번호만 (imgr v0.24) — the window title is just the name and version
 

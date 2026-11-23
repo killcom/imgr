@@ -316,9 +316,9 @@ impl App {
 
     fn draw_cell(&mut self, ui: &egui::Ui, rect: Rect, resp: &egui::Response, pos: usize, img: Vec2) -> Rect {
         let ix = self.shown[pos];
-        let (id, score, ntags, trash, missing, name) = {
+        let (id, score, ntags, missing, name) = {
             let im = &self.db.images[ix];
-            (im.id.clone(), im.score, im.tags.len(), im.trash, im.missing, im.name().to_string())
+            (im.id.clone(), im.score, im.tags.len(), im.missing, im.name().to_string())
         };
         let selected = self.sel.contains(&id);
         let focused = self.focus == Some(pos);
@@ -345,10 +345,6 @@ impl App {
                 img_rect
             }
         };
-        if trash {
-            p.rect_filled(shown_r, 0.0, Color32::from_black_alpha(140));
-            p.text(shown_r.center(), egui::Align2::CENTER_CENTER, tr("휴지통", "Trash"), egui::FontId::proportional(14.0 + UI_FONT_PLUS), ERR);
-        }
         if score > 0 {
             let c = pos2(shown_r.left() + 13.0, shown_r.top() + 13.0);
             p.circle_filled(c, 11.0, score_color(score));
@@ -530,7 +526,7 @@ impl App {
         if resp.hovered() && self.marquee.is_none() && self.pic_drag.is_none() {
             let tip = match target {
                 None => tr("무소속 — 어느 앨범에도 없는 그림\n더블클릭: 열기 · 그림을 여기 놓으면 모든 앨범에서 빠짐", "Unassigned — pictures in no album\nDouble-click: open · dropping pictures here removes them from all albums").to_string(),
-                Some(id) => trf!("{}\n더블클릭·Enter: 열기 · 클릭/Ctrl/Shift/끌기: 고르기\n고른 앨범을 다른 앨범에 끌어 놓기 또는 Ctrl+X → Ctrl+V: 옮기기\nF2 이름 · Del 지우기 · 오른쪽 클릭: 메뉴", "{}\nDouble-click / Enter: open · click / Ctrl / Shift / drag: select\nDrag selected albums onto another album, or Ctrl+X → Ctrl+V: move\nF2 rename · Del delete · right-click: menu", self.db.album_path(id)),
+                Some(id) => trf!("{0}\n더블클릭·Enter: 열기 · 클릭/Ctrl/Shift/끌기: 고르기\n고른 앨범을 다른 앨범에 끌어 놓기 또는 Ctrl+X → Ctrl+V: 옮기기\nF2 이름 · {1} 지우기 (그림은 그대로) · {2} 그림까지 · 오른쪽 클릭: 메뉴", "{0}\nDouble-click / Enter: open · click / Ctrl / Shift / drag: select\nDrag selected albums onto another album, or Ctrl+X → Ctrl+V: move\nF2 rename · {1} delete (pictures kept) · {2} with pictures · right-click: menu", self.db.album_path(id), self.del_keys().0, self.del_keys().1),
             };
             resp.clone().on_hover_text(tip);
         }
@@ -592,8 +588,13 @@ impl App {
             ui.close();
         }
         ui.separator();
-        if ui.button(tr("앨범 지우기… (그림은 그대로)    Del", "Delete album… (pictures are kept)    Del")).clicked() {
-            self.modal = Some(Modal::AlbumDelete { ids });
+        let (light_key, strong_key) = self.del_keys();
+        if ui.button(trf!("앨범 지우기… (그림은 그대로)    {}", "Delete album… (pictures are kept)    {}", light_key)).clicked() {
+            self.modal = Some(Modal::AlbumDelete { ids: ids.clone(), with_pics: false });
+            ui.close();
+        }
+        if ui.button(trf!("앨범과 안의 그림까지 지우기… (그림은 imgr 휴지통)    {}", "Delete album with its pictures… (to the imgr Trash)    {}", strong_key)).clicked() {
+            self.modal = Some(Modal::AlbumDelete { ids, with_pics: true });
             ui.close();
         }
     }
@@ -752,12 +753,13 @@ impl App {
         };
         if let Some(x) = here {
             let name = self.album_label(Some(x));
-            if ui.button(trf!("'{name}'에서 빼기    Del", "Remove from '{name}'    Del")).on_hover_text(tr("이 앨범에서만 뺌. 다른 앨범에 없는 그림은 imgr 휴지통으로", "Removes from this album only. Pictures in no other album go to the imgr Trash")).clicked() {
+            let light_key = self.del_keys().0;
+            if ui.button(trf!("'{name}'에서 빼기    {light_key}", "Remove from '{name}'    {light_key}")).on_hover_text(tr("이 앨범에서만 뺌. 다른 앨범에 없는 그림은 imgr 휴지통으로", "Removes from this album only. Pictures in no other album go to the imgr Trash")).clicked() {
                 self.take_out_here(&ids, x);
                 ui.close();
             }
         }
-        let del = if here.is_some() { "" } else { "    Del" };
+        let del = if here.is_some() { format!("    {}", self.del_keys().1) } else { "    Del".to_string() };
         if ui.button(if all_trash { trf!("되살리기{del}", "Restore{del}") } else { trf!("imgr 휴지통으로{del}", "Move to imgr Trash{del}") }).clicked() {
             self.set_trash(!all_trash);
             ui.close();
