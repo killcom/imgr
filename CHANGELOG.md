@@ -1,5 +1,8 @@
 # 바뀐 것 / Changes
 
+## v0.22
+- 해시태그 옆 숫자에서 휴지통 그림을 뺌 (누르면 보이는 수와 같게) — hashtag counts no longer include pictures in the trash (same as what a click shows)
+
 ## v0.21
 - 검색 조건을 콤마로 나눔 (long hair, scar) — search conditions are separated by commas
 - 그냥 글자는 프롬프트 태그를 통째로 찾음, __scar__ / __scar / scar__ = 들어간 / 끝나는 / 시작하는 태그 — plain text finds a whole prompt tag; __scar__ / __scar / scar__ = contains / ends with / starts with

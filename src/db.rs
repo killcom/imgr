@@ -317,7 +317,8 @@ impl Db {
     pub fn all_tags(&self) -> Vec<(String, usize)> {
         let mut m: HashMap<&str, usize> = HashMap::new();
         for i in &self.images {
-            if i.missing {
+            // like every other count in 검색 뷰: what a click on the tag shows (trash is hidden)
+            if i.missing || i.trash {
                 continue;
             }
             for t in &i.tags {
@@ -1568,6 +1569,15 @@ mod tests {
         assert!(db.images[3].albums.is_empty());
         assert_eq!(db.presets_into_albums(), 0); // only once
         assert_eq!(db.albums.len(), 3);
+    }
+
+    #[test]
+    fn tag_counts_skip_trash() {
+        let mut db = Db::default();
+        for (k, trash) in [false, false, true].into_iter().enumerate() {
+            db.images.push(Img { id: format!("t{k}"), tags: vec!["swim".into()], trash, ..Default::default() });
+        }
+        assert_eq!(db.all_tags(), vec![("swim".to_string(), 2)]);
     }
 
     #[test]
