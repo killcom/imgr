@@ -514,13 +514,16 @@ impl App {
         };
         let kids = target.map(|a| self.db.album_children(a).len()).unwrap_or(0);
         let name = self.album_label(target);
-        let strip_h = (32.0 + UI_FONT_PLUS * 2.0).min(pic.height());
-        let strip = Rect::from_min_max(pos2(pic.left(), pic.bottom() - strip_h), pic.max);
-        p.rect_filled(strip, 0.0, Color32::from_black_alpha(185));
-        let mut job = egui::text::LayoutJob::simple(format!("📁 {name}"), egui::FontId::proportional(13.0 + UI_FONT_PLUS), TEXT, strip.width() - 8.0);
-        job.wrap.max_rows = 1;
+        // a long name takes up to two lines: the strip grows up over the cover picture
+        let mut job = egui::text::LayoutJob::simple(format!("📁 {name}"), egui::FontId::proportional(13.0 + UI_FONT_PLUS), TEXT, pic.width() - 8.0);
+        job.wrap.max_rows = 2;
         job.wrap.break_anywhere = true;
         let g = ui.fonts_mut(|f| f.layout_job(job));
+        let sub_h = 11.0 + UI_FONT_PLUS + 7.0;
+        let strip_h = (g.size().y + 2.0 + sub_h).max(32.0 + UI_FONT_PLUS * 2.0).min(pic.height());
+        let strip = Rect::from_min_max(pos2(pic.left(), pic.bottom() - strip_h), pic.max);
+        p.rect_filled(strip, 0.0, Color32::from_black_alpha(185));
+        self.mark(&format!("{key}_name"), Rect::from_min_size(strip.min + vec2(5.0, 2.0), g.size()));
         p.galley(strip.min + vec2(5.0, 2.0), g, TEXT);
         let sub = if kids > 0 { trf!("{n}장 · 앨범 {kids}", "{n} pictures · {kids} albums") } else { trf!("{n}장", "{n} pictures") };
         p.text(pos2(strip.left() + 6.0, strip.bottom() - 3.0), egui::Align2::LEFT_BOTTOM, sub, egui::FontId::proportional(11.0 + UI_FONT_PLUS), DIM);

@@ -11,8 +11,9 @@ To use another location, set the environment variable `IMGR_ROOT` to that folder
 Double-click imgr.exe. On start it reads the imgs folder, sorts out new, moved and missing pictures, and shows the list right away.
 If imgr is already running, it does not open a new window; it brings the running window to the front (via a Windows signal, no network used).
 All pictures are kept in imgs\00001, 00002 … (2000 pictures per folder; change this in ⚙ Settings at the top). imgr fills the folders by itself.
-Scores, tags, albums and filters are saved in data\db.json (data\db.json.bak = a backup from about 10 minutes ago, data\backup = one per day for 14 days).
-If db.json is corrupted, the broken file is kept as db.broken_<date>.json and imgr reads from a backup. If neither can be read, imgr only reads and does not save.
+Scores, tags, albums and filters are saved in data\imgr.db (SQLite); only changed pictures are written (data\backup = one copy per day for 14 days, imgr_<date>.db).
+A save is all or nothing, so closing imgr in the middle cannot break the file. If imgr.db cannot be read, imgr only reads and does not save (copy a file from data\backup to imgr.db to restore).
+The data\db.json of v0.16 and before is moved once when v0.20 first starts and kept as db.json.v016 (older versions no longer open that data).
 Pictures are recognized by their content, so if you move or rename files inside imgs, their scores and tags follow.
 Window size and position, side panel widths and the last picture you were viewing are restored next time.
 ```

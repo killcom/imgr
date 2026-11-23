@@ -50,7 +50,7 @@ The folder that holds the exe (or the environment variable `IMGR_ROOT`) is imgr'
 ```
 imgr.exe
 imgs\00001\…    pictures (2000 per folder, change it in ⚙ Settings)
-data\           records: db.json (scores, tags, albums…), settings.json, thumbnail cache, backups
+data\           records: imgr.db (SQLite: scores, tags, albums…), settings.json, thumbnail cache, backups
 ```
 
 - Everything is kept in this folder. Nothing is sent over the internet.

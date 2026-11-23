@@ -51,7 +51,7 @@ exe가 있는 폴더(또는 환경 변수 `IMGR_ROOT`)가 imgr의 자리입니�
 ```
 imgr.exe
 imgs\00001\…    그림 (한 폴더에 2000장씩 채움, ⚙ 설정에서 바꿈)
-data\           기록: db.json(점수·태그·앨범…), settings.json, 썸네일 캐시, 백업
+data\           기록: imgr.db(SQLite: 점수·태그·앨범…), settings.json, 썸네일 캐시, 백업
 ```
 
 - 모든 기록은 이 폴더 안에만 둡니다. 인터넷으로 아무것도 보내지 않습니다.

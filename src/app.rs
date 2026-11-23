@@ -328,8 +328,8 @@ pub struct App {
     /// bumped by renames / record removals; a scan started before is re-run
     mut_gen: u64,
     scan_gen: u64,
-    /// db.json writer thread (latest bytes win; optional ack for exit)
-    save_tx: Sender<(Vec<u8>, Option<Sender<()>>)>,
+    /// imgr.db writer thread (changed rows, written in order; optional ack for exit)
+    save_tx: Sender<(crate::store::Delta, Option<Sender<()>>)>,
     save_err: Arc<std::sync::Mutex<Option<String>>>,
     last_title: String,
     /// ids re-hash needed (db from an older id version)
@@ -414,26 +414,32 @@ impl App {
         let (db, db_warn) = Db::load();
         let rehash = db.version < db::DB_VERSION && !db.images.is_empty();
         let save_err: Arc<std::sync::Mutex<Option<String>>> = Arc::new(std::sync::Mutex::new(None));
-        let (save_tx, save_rx) = channel::<(Vec<u8>, Option<Sender<()>>)>();
+        let (save_tx, save_rx) = channel::<(crate::store::Delta, Option<Sender<()>>)>();
         {
             let err = save_err.clone();
             let _ = std::thread::Builder::new().name("db-writer".into()).spawn(move || {
-                while let Ok(first) = save_rx.recv() {
-                    // only the newest snapshot matters; collect every ack
-                    let mut job = first;
-                    let mut acks: Vec<Sender<()>> = Vec::new();
-                    while let Ok(next) = save_rx.try_recv() {
-                        if let Some(a) = job.1.take() {
-                            acks.push(a);
+                let mut conn: Option<rusqlite::Connection> = None;
+                while let Ok((delta, ack)) = save_rx.recv() {
+                    // every delta is written, in order (each holds only its own changes)
+                    let r = (|| -> Result<(), String> {
+                        if conn.is_none() {
+                            let _ = std::fs::create_dir_all(db::data_dir());
+                            conn = Some(crate::store::open(&crate::store::path()).map_err(|e| e.to_string())?);
                         }
-                        job = next;
+                        let c = conn.as_mut().expect("opened above");
+                        if !delta.is_empty() {
+                            crate::store::apply(c, &delta).map_err(|e| e.to_string())?;
+                        }
+                        crate::store::daily_backup(c);
+                        Ok(())
+                    })();
+                    if r.is_err() {
+                        conn = None;
                     }
-                    if let Some(a) = job.1.take() {
-                        acks.push(a);
+                    if let Err(e) = r {
+                        *err.lock().unwrap_or_else(|e| e.into_inner()) = Some(e);
                     }
-                    let r = db::write_bytes(&job.0);
-                    *err.lock().unwrap_or_else(|e| e.into_inner()) = r.err().map(|e| e.to_string());
-                    for a in acks {
+                    if let Some(a) = ack {
                         let _ = a.send(());
                     }
                 }
@@ -584,6 +590,9 @@ impl App {
         }
         if let Some(w) = db_warn {
             app.notice(w, true);
+        }
+        if let Some(n) = app.db.moved_from_json {
+            app.notice(trf!("기록을 db.json에서 data\\imgr.db로 옮겼습니다 ({n}장). 예전 판(v0.16 이하)은 이제 이 data를 열지 않습니다", "Moved the records from db.json into data\\imgr.db ({n} pictures). Older versions (v0.16 and before) no longer open this data"), false);
         }
         if app.db.images.is_empty() {
             app.db.version = db::DB_VERSION;
@@ -855,9 +864,11 @@ impl App {
     }
 
     fn save_now(&mut self) {
-        match self.db.to_bytes() {
+        match self.db.take_delta() {
             Ok(b) => {
-                let _ = self.save_tx.send((b, None));
+                if !b.is_empty() {
+                    let _ = self.save_tx.send((b, None));
+                }
                 self.dirty = false;
             }
             Err(e) => {
@@ -873,7 +884,7 @@ impl App {
 
     /// Save and wait until it is on disk (on exit).
     fn save_blocking(&mut self) {
-        if let Ok(b) = self.db.to_bytes() {
+        if let Ok(b) = self.db.take_delta() {
             let (atx, arx) = channel();
             if self.save_tx.send((b, Some(atx))).is_ok() {
                 let _ = arx.recv_timeout(Duration::from_secs(20));
@@ -1193,7 +1204,8 @@ impl App {
         }
         let werr = self.save_err.lock().map(|mut e| e.take()).unwrap_or(None);
         if let Some(e) = werr {
-            self.notice(trf!("db.json 저장 실패: {e}", "Could not save db.json: {e}"), true);
+            self.notice(trf!("imgr.db 저장 실패: {e}", "Could not save imgr.db: {e}"), true);
+            self.db.forget_saved();
             self.dirty = true;
         }
         // periodic quiet rescan (pictures put into imgs with Explorer) and watch folders

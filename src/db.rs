@@ -1,4 +1,4 @@
-//! Image library: one JSON file (data/db.json) with a record per picture.
+//! Image library: a record per picture, kept in data/imgr.db (store.rs; db.json up to v0.16).
 //!
 //! A picture is identified by a hash of its bytes, so tags and scores survive
 //! renames and moves inside imgs. Files that disappear are kept as
@@ -20,7 +20,7 @@ pub fn per_folder() -> usize {
     PER_FOLDER.load(std::sync::atomic::Ordering::Relaxed)
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Hash)]
 #[serde(default)]
 pub struct Img {
     pub id: String,
@@ -69,7 +69,7 @@ impl Img {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Hash)]
 pub struct SavedFilter {
     pub name: String,
     pub query: String,
@@ -77,7 +77,7 @@ pub struct SavedFilter {
 
 /// An album: a user-made group of pictures inside imgr (not a folder on disk).
 /// A picture can be in several albums; albums can hold sub albums.
-#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Hash)]
 #[serde(default)]
 pub struct Album {
     /// 1, 2, 3 ... never reused
@@ -102,9 +102,26 @@ pub struct Db {
     /// fields written by a newer imgr: kept as they are when an older exe saves
     #[serde(flatten)]
     pub extra: serde_json::Map<String, serde_json::Value>,
-    /// db.json could not be read: never save over it
+    /// the library could not be read: never save over it
     #[serde(skip)]
     pub read_only: bool,
+    /// fingerprint of each picture as last saved (only changed ones are written)
+    #[serde(skip)]
+    saved_fp: HashMap<String, u64>,
+    /// albums / filters / small values as last saved; None = not saved yet
+    #[serde(skip)]
+    misc_fp: Option<u64>,
+    /// next save rewrites everything (first write, or a save failed)
+    #[serde(skip)]
+    need_full: bool,
+    /// this start moved db.json into imgr.db: how many pictures (a plain notice, not a warning)
+    #[serde(skip)]
+    pub moved_from_json: Option<usize>,
+}
+
+fn fp_of<T: std::hash::Hash>(v: &T) -> u64 {
+    use std::hash::{BuildHasher, BuildHasherDefault};
+    BuildHasherDefault::<std::collections::hash_map::DefaultHasher>::default().hash_one(v)
 }
 
 /// Version of the id hash (2 = the fixed FNV/CRC hash below).
@@ -154,40 +171,130 @@ pub fn data_dir() -> PathBuf {
 }
 
 impl Db {
-    /// Load data/db.json. Returns the db and a warning for the user.
-    /// A missing file = new library. A file that exists but cannot be read is
-    /// never replaced: the backup is tried, and if that fails too the db is
-    /// opened read-only (nothing is saved) so the user's data stays on disk.
+    /// Load the library (data/imgr.db). Returns the db and a warning for the user.
+    /// No imgr.db but a db.json (imgr up to v0.16): it is moved into imgr.db once
+    /// and checked field by field. A file that exists but cannot be read is never
+    /// replaced: the db is opened read-only (nothing is saved) so the data stays on disk.
     pub fn load() -> (Db, Option<String>) {
         let d = data_dir();
-        let p = d.join("db.json");
-        let parse = |path: &Path| -> Result<Db, String> {
-            let b = std::fs::read(path).map_err(|e| e.to_string())?;
-            serde_json::from_slice::<Db>(&b).map_err(|e| e.to_string())
-        };
-        if let Err(e) = std::fs::metadata(&p) {
-            if e.kind() == std::io::ErrorKind::NotFound && !d.join("db.json.bak").exists() {
-                return (Db { version: DB_VERSION, meta_ver: META_VER, ..Default::default() }, None);
-            }
-        }
-        let (mut db, note) = match parse(&p) {
-            Ok(db) => (db, None),
-            Err(e1) => {
-                let stamp = chrono::Local::now().format("%Y%m%d_%H%M%S");
-                let _ = std::fs::copy(&p, d.join(format!("db.broken_{stamp}.json")));
-                match parse(&d.join("db.json.bak")) {
-                    Ok(db) => (db, Some(crate::trf!("db.json을 읽지 못해 ({e1}) 백업 db.json.bak 으로 열었습니다", "Could not read db.json ({e1}); opened the backup db.json.bak"))),
-                    Err(_) => {
-                        let db = Db { read_only: true, version: DB_VERSION, ..Default::default() };
-                        (db, Some(crate::trf!("db.json을 읽지 못했습니다 ({e1}). 점수·태그를 지키려고 저장을 멈춥니다. imgr를 끄고 data 폴더를 확인해 주세요", "Could not read db.json ({e1}). Saving is stopped to protect scores and tags. Close imgr and check the data folder")))
-                    }
+        let sq = d.join(crate::store::FILE);
+        let js = d.join("db.json");
+        let ro = |why: String| (Db { read_only: true, version: DB_VERSION, meta_ver: META_VER, ..Default::default() }, Some(why));
+        let (mut db, note) = if sq.exists() {
+            match crate::store::open(&sq).map_err(|e| e.to_string()).and_then(|c| crate::store::load(&c)) {
+                Ok(mut db) => {
+                    let note = db.read_only.then(|| crate::i18n::tr("imgr.db가 이 판보다 새 imgr로 저장돼 있어 읽기만 합니다", "imgr.db was saved by a newer imgr: opened read-only").to_string());
+                    db.mark_all_saved();
+                    (db, note)
                 }
+                Err(e) => return ro(crate::trf!("imgr.db를 읽지 못했습니다 ({e}). 점수·태그를 지키려고 저장을 멈춥니다. imgr를 끄고 data 폴더를 확인해 주세요 (data\\backup 에 날마다 사본)", "Could not read imgr.db ({e}). Saving is stopped to protect scores and tags. Close imgr and check the data folder (data\\backup has a copy per day)")),
             }
+        } else if crate::store::is_stub(&js) {
+            return ro(crate::i18n::tr("data\\imgr.db가 없습니다 (db.json은 이미 옮겨진 표시뿐). 저장을 멈춥니다. data\\backup 의 imgr_날짜.db 를 data\\imgr.db 로 복사해 주세요", "data\\imgr.db is missing (db.json only says it was moved). Saving is stopped. Copy a data\\backup\\imgr_<date>.db to data\\imgr.db").into());
+        } else if js.exists() || d.join("db.json.bak").exists() {
+            let (mut db, note) = match Db::load_json(&d) {
+                Ok(x) => x,
+                Err(why) => return ro(why),
+            };
+            match crate::store::convert_json(&mut db, &d) {
+                Ok(()) => {
+                    db.moved_from_json = Some(db.images.len());
+                    (db, note)
+                }
+                Err(e) => return ro(crate::trf!("db.json을 imgr.db로 옮기지 못했습니다 ({e}). db.json은 그대로 두고 저장을 멈춥니다", "Could not move db.json into imgr.db ({e}). db.json is left as it is and saving is stopped")),
+            }
+        } else {
+            let mut db = Db { version: DB_VERSION, meta_ver: META_VER, ..Default::default() };
+            db.need_full = true;
+            (db, None)
         };
         if !db.read_only {
             db.reread_old_meta();
         }
         (db, note)
+    }
+
+    /// db.json of imgr up to v0.16 (and its .bak if db.json is broken).
+    fn load_json(d: &Path) -> Result<(Db, Option<String>), String> {
+        let p = d.join("db.json");
+        let parse = |path: &Path| -> Result<Db, String> {
+            let b = std::fs::read(path).map_err(|e| e.to_string())?;
+            serde_json::from_slice::<Db>(&b).map_err(|e| e.to_string())
+        };
+        match parse(&p) {
+            Ok(db) => Ok((db, None)),
+            Err(e1) => {
+                let stamp = chrono::Local::now().format("%Y%m%d_%H%M%S");
+                if p.exists() {
+                    let _ = std::fs::copy(&p, d.join(format!("db.broken_{stamp}.json")));
+                }
+                match parse(&d.join("db.json.bak")) {
+                    Ok(db) => Ok((db, Some(crate::trf!("db.json을 읽지 못해 ({e1}) 백업 db.json.bak 으로 열었습니다", "Could not read db.json ({e1}); opened the backup db.json.bak")))),
+                    Err(_) => Err(crate::trf!("db.json을 읽지 못했습니다 ({e1}). 점수·태그를 지키려고 저장을 멈춥니다. imgr를 끄고 data 폴더를 확인해 주세요", "Could not read db.json ({e1}). Saving is stopped to protect scores and tags. Close imgr and check the data folder")),
+                }
+            }
+        }
+    }
+
+    /// Everything in memory is what the file holds (right after a load).
+    pub fn mark_all_saved(&mut self) {
+        self.saved_fp = self.images.iter().map(|i| (i.id.clone(), fp_of(i))).collect();
+        self.misc_fp = Some(self.misc_fp_now());
+        self.need_full = false;
+    }
+
+    /// A save failed: the next one writes everything again.
+    pub fn forget_saved(&mut self) {
+        self.saved_fp.clear();
+        self.misc_fp = None;
+        self.need_full = true;
+    }
+
+    fn misc_fp_now(&self) -> u64 {
+        let extra = serde_json::to_string(&self.extra).unwrap_or_default();
+        fp_of(&(&self.albums, &self.saved, self.version, self.meta_ver, self.presets_to_albums, extra))
+    }
+
+    /// What changed since the last save (UI thread; the writer thread does the disk part).
+    pub fn take_delta(&mut self) -> Result<crate::store::Delta, String> {
+        if self.read_only {
+            return Err(crate::i18n::tr("기록을 읽지 못해서 저장하지 않습니다", "Not saved because the records could not be read").into());
+        }
+        let mut d = crate::store::Delta { full: self.need_full, ..Default::default() };
+        if d.full {
+            self.saved_fp.clear();
+        }
+        let mut now: HashSet<&str> = HashSet::with_capacity(self.images.len());
+        for i in &self.images {
+            now.insert(i.id.as_str());
+            let f = fp_of(i);
+            if self.saved_fp.get(&i.id) != Some(&f) {
+                d.upsert.push(i.clone());
+                self.saved_fp.insert(i.id.clone(), f);
+            }
+        }
+        if self.saved_fp.len() > now.len() {
+            d.delete = self.saved_fp.keys().filter(|k| !now.contains(k.as_str())).cloned().collect();
+            for k in &d.delete {
+                self.saved_fp.remove(k);
+            }
+        }
+        let m = self.misc_fp_now();
+        if d.full || self.misc_fp != Some(m) {
+            d.misc = Some(crate::store::Misc {
+                albums: self.albums.clone(),
+                saved: self.saved.clone(),
+                meta: vec![
+                    ("version", self.version.to_string()),
+                    ("meta_ver", self.meta_ver.to_string()),
+                    ("presets_to_albums", if self.presets_to_albums { "1" } else { "0" }.to_string()),
+                    ("extra", serde_json::to_string(&self.extra).unwrap_or_else(|_| "{}".into())),
+                ],
+            });
+            self.misc_fp = Some(m);
+        }
+        self.need_full = false;
+        Ok(d)
     }
 
     /// A newer PNG info reader: pictures that came out without checkpoint or prompt are read
@@ -206,16 +313,6 @@ impl Db {
         self.meta_ver = META_VER;
         n
     }
-
-    /// Serialize for saving (UI thread); `write_bytes` does the disk part (any thread).
-    pub fn to_bytes(&self) -> Result<Vec<u8>, String> {
-        if self.read_only {
-            return Err(crate::i18n::tr("db.json을 읽지 못해서 저장하지 않습니다", "Not saved because db.json could not be read").into());
-        }
-        serde_json::to_vec(self).map_err(|e| e.to_string())
-    }
-
-
 
     pub fn all_tags(&self) -> Vec<(String, usize)> {
         let mut m: HashMap<&str, usize> = HashMap::new();
@@ -578,48 +675,6 @@ pub fn is_image(p: &Path) -> bool {
         .and_then(|e| e.to_str())
         .map(|e| EXTS.contains(&e.to_ascii_lowercase().as_str()))
         .unwrap_or(false)
-}
-
-/// Write db.json safely: tmp + fsync + rename. The previous db.json becomes
-/// db.json.bak at most every 10 minutes, and one copy per day is kept in
-/// data/backup (last 14 days), so a bad save can always be undone.
-pub fn write_bytes(b: &[u8]) -> std::io::Result<()> {
-    use std::io::Write;
-    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-    let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let d = data_dir();
-    std::fs::create_dir_all(&d)?;
-    let p = d.join("db.json");
-    let tmp = d.join("db.json.tmp");
-    {
-        let mut f = std::fs::File::create(&tmp)?;
-        f.write_all(b)?;
-        f.sync_all()?;
-    }
-    if p.exists() {
-        let bak = d.join("db.json.bak");
-        let old = std::fs::metadata(&bak)
-            .and_then(|m| m.modified())
-            .map(|t| t.elapsed().map(|e| e.as_secs() > 600).unwrap_or(true))
-            .unwrap_or(true);
-        if old {
-            let _ = std::fs::copy(&p, &bak);
-        }
-        let bdir = d.join("backup");
-        let today = bdir.join(format!("db_{}.json", chrono::Local::now().format("%Y%m%d")));
-        if !today.exists() {
-            let _ = std::fs::create_dir_all(&bdir);
-            let _ = std::fs::copy(&p, &today);
-            if let Ok(rd) = std::fs::read_dir(&bdir) {
-                let mut v: Vec<PathBuf> = rd.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|e| e == "json")).collect();
-                v.sort();
-                while v.len() > 14 {
-                    let _ = std::fs::remove_file(v.remove(0));
-                }
-            }
-        }
-    }
-    std::fs::rename(&tmp, &p)
 }
 
 pub fn mtime_of(m: &std::fs::Metadata) -> u64 {

@@ -1,5 +1,10 @@
 # 바뀐 것 / Changes
 
+## v0.20
+- 기록을 db.json 대신 data\imgr.db(SQLite)에 저장, 바뀐 그림만 씀 — records are kept in data\imgr.db (SQLite) instead of db.json; a save writes only the pictures that changed
+- 처음 켤 때 db.json을 한 번 옮기고 하나하나 대조, db.json.v016으로 남김 — on first start db.json is moved once, checked field by field and kept as db.json.v016
+- 앨범 이름이 길면 두 줄까지 보임 — long album names show on up to two lines
+
 ## v0.16
 - 사전(L) 없앰: 사전 화면, `lib:` 검색, "사전 항목 만들기", "사전 예시로 고정" — removed the Library (L): its screen, the `lib:` search word and the related picture menu items
 

@@ -8,6 +8,7 @@ mod db;
 mod ops;
 mod query;
 mod settings;
+mod store;
 mod thumbs;
 mod winshell;
 
