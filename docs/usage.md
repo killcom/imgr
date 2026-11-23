@@ -167,7 +167,8 @@ There are two ways to view:
               click = only that album (including pictures of its sub-albums), Ctrl+click = several albums together (pictures of all chosen albums are shown), click again when only one is chosen = remove it.
               It filters together with other filters (score, tag, checkpoint…)
 Album view:
-  The top level (/) shows the top-level albums, then the pictures that are in no album (No album). Inside an album, sub-album cells come first, then that album's pictures. Clicking the gap between cells does nothing.
+  The top level (/) shows the top-level albums, then the pictures put at the top and those in no album (No album).
+  The top holds pictures like an album: a picture in Album1 can sit at the top too. Inside an album, sub-album cells come first, then that album's pictures. Clicking the gap between cells does nothing.
   New album: Ctrl+N, or right-click an empty area → "New album…" (inside an album it makes a sub-album, at the top level a top-level album).
            It is created only when you enter a name and press 'Create' (if you cancel, nothing is created). "＋ New album" at the top does the same.
   Click an album cell = open it right away.
@@ -183,7 +184,7 @@ Album view:
   "Swap Del and Shift+Del" in Settings swaps the two keys.
   Moving: drag pictures or albums onto another album (cell · path at the top · left Album view) = they leave this album and move there
           (for pictures, dropping while holding Ctrl copies = they stay in this album too. Album cells can be dragged right away without selecting them)
-          or Ctrl+X → open the destination and Ctrl+V.  Dropping on "🗂 Album" at the top or / on the left / Ctrl+V at the top level = move to the top level (pictures leave this album).
+          or Ctrl+X → open the destination and Ctrl+V.  The top level works the same: dropping on "🗂 Album" at the top or / on the left = move to the top (Ctrl = copy), Ctrl+V at the top = put them at the top too.
   Adding: drag the selected pictures onto an album / Ctrl+C → open an album and Ctrl+V / right-click a picture → album
   Ctrl+↑ · Alt+↑ · Backspace · Esc · mouse back button = up one level.  You can also click the path at the top (Album › trip › sea).
   When you select a picture, it is shown large at the top of the right panel.

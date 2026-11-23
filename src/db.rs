@@ -559,6 +559,10 @@ impl Db {
             let before = im.albums.len();
             im.albums.retain(|&a| a != id);
             n += (before != im.albums.len()) as usize;
+            // only the top left (album 0): simply in no album
+            if im.albums.iter().all(|&a| a == 0) {
+                im.albums.clear();
+            }
         }
         n
     }

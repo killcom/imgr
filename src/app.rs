@@ -800,11 +800,11 @@ impl App {
         let parent: HashMap<u32, u32> = self.db.albums.iter().map(|a| (a.id, a.parent)).collect();
         let mut up: HashSet<u32> = HashSet::new();
         for i in self.db.images.iter().filter(|i| !i.missing && !i.trash) {
-            if i.albums.is_empty() {
+            if i.albums.iter().all(|&a| a == 0) {
                 self.unfiled_n += 1;
             }
             up.clear();
-            for a in &i.albums {
+            for a in i.albums.iter().filter(|&&a| a != 0) {
                 *self.album_counts.entry(*a).or_default() += 1;
                 // the album and every album above it (a picture counts once per album)
                 let mut x = *a;
@@ -1301,6 +1301,9 @@ impl App {
             let im = &mut self.db.images[i];
             step.items.push(UndoItem { id: im.id.clone(), score: im.score, tags: im.tags.clone(), trash: im.trash, preset: im.preset.clone(), preset_set: im.preset_set, albums: im.albums.clone() });
             f(im);
+            if im.albums.iter().all(|&a| a == 0) {
+                im.albums.clear();
+            }
         }
         if !step.items.is_empty() {
             self.undo.push(step);
@@ -1472,6 +1475,15 @@ impl App {
         if n > 0 {
             self.mark_changed();
             self.refilter(true);
+        }
+    }
+
+    /// Where pictures put "here" go: the album shown, `Some(Some(0))` at the album view's
+    /// top, `Some(None)` in 무소속, `None` when no album is shown.
+    fn here(&self) -> Option<Option<u32>> {
+        match self.cur_album() {
+            None if self.view == View::Albums => Some(Some(0)),
+            c => c,
         }
     }
 
@@ -1691,14 +1703,11 @@ impl App {
         if ids.is_empty() {
             return;
         }
-        if to == Some(0) {
-            self.notice(tr("그림은 맨 위에 둘 수 없습니다 — 앨범을 열고 넣으세요", "Pictures cannot go at the top — open an album and put them there"), true);
-            return;
-        }
         let name = self.album_label(to);
         let n = match to {
             Some(a) => {
-                let todo: Vec<String> = ids.iter().filter(|id| self.img(id).is_some_and(|i| !i.albums.contains(&a))).cloned().collect();
+                // a picture in no album already sits at the top
+                let todo: Vec<String> = ids.iter().filter(|id| self.img(id).is_some_and(|i| !i.albums.contains(&a) && !(a == 0 && i.albums.is_empty()))).cloned().collect();
                 self.edit(&todo, &trf!("앨범 '{name}'에 넣기", "Add to album '{name}'"), |im| im.albums.push(a));
                 todo.len()
             }
@@ -1746,7 +1755,7 @@ impl App {
         if ids.is_empty() && albums.is_empty() {
             return;
         }
-        let from = self.cur_album();
+        let from = self.here();
         if cut {
             self.notice(trf!("{} 잘라 둠 — 옮길 앨범을 열고 Ctrl+V", "{} cut — open the target album and press Ctrl+V", Self::count_text(ids.len(), albums.len())), false);
         } else {
@@ -1805,17 +1814,8 @@ impl App {
                 return;
             }
         }
-        let Some(to) = cur else {
-            if self.view == View::Albums && clip.cut {
-                // pictures cut from an album, pasted at the top: they leave that album
-                match clip.from {
-                    Some(Some(f)) => self.out_to_top(&clip.ids, f),
-                    _ => self.notice(tr("이미 맨 위에 있는 그림입니다", "That picture is already at the top"), false),
-                }
-            } else if self.view == View::Albums {
-                self.notice(tr("맨 위에는 복사해 둘 수 없습니다 (Ctrl+X로 잘라서 붙이면 앨범에서 빠짐)", "Cannot copy to the top (cut with Ctrl+X and paste to take it out of the album)"), true);
-                self.album_clip = Some(clip);
-            } else if clip.albums.is_empty() {
+        let Some(to) = self.here() else {
+            if clip.albums.is_empty() {
                 self.notice(tr("붙여 넣을 앨범을 먼저 여세요 (왼쪽 앨범 목록이나 🗂 앨범 화면)", "Open the album to paste into first (left album list or the 🗂 Album view)"), true);
                 self.album_clip = Some(clip);
             }
@@ -1854,6 +1854,7 @@ impl App {
         if !ids.is_empty() {
             match self.cur_album() {
                 Some(Some(x)) if !strong => self.take_out_here(&ids, x),
+                None if !strong && self.view == View::Albums => self.take_out_here(&ids, 0),
                 // 무소속 (in no album) or Shift+Del: straight to the trash
                 _ => self.set_trash(true),
             }
@@ -1892,23 +1893,13 @@ impl App {
         (tree.len(), pics.len())
     }
 
-    /// Pictures moved to the album view's top: they leave album `f` (and show at
-    /// the top once they are in no album).
-    pub(super) fn out_to_top(&mut self, ids: &[String], f: u32) {
-        let name = self.album_label(Some(f));
-        self.edit(ids, &trf!("'{name}'에서 맨 위로", "From '{name}' to top"), |im| im.albums.retain(|&a| a != f));
-        self.notice(trf!("{}장을 '{name}'에서 뺌 (Ctrl+Z 되돌리기)", "Removed {} pictures from '{name}' (Ctrl+Z to undo)", ids.len()), false);
-        self.sel.clear();
-        self.refilter(true);
-    }
-
     fn take_out_here(&mut self, ids: &[String], x: u32) {
-        let only_here = |i: &Img| i.albums.iter().all(|&a| a == x);
+        let only_here = |i: &Img| i.albums.iter().all(|&a| a == x || a == 0);
         let last = ids.iter().filter(|id| self.img(id).is_some_and(|i| only_here(i))).count();
         let n = ids.len();
         let name = self.album_label(Some(x));
         self.edit(ids, &trf!("'{name}'에서 빼기", "Remove from '{name}'"), |im| {
-            if im.albums.iter().all(|&a| a == x) {
+            if im.albums.iter().all(|&a| a == x || a == 0) {
                 im.trash = true;
             } else {
                 im.albums.retain(|&a| a != x);
@@ -2587,7 +2578,7 @@ folder:00001      name:003640
 album:여행  album:none   여행 앨범에 바로 든 그림 / 무소속(어느 앨범에도 없는 그림)
 album:여행+         여행과 그 하위 앨범들의 그림 (왼쪽 앨범을 누르면 넣어 줌)
 album:여행/바다      이름이 같은 앨범이 또 있으면 경로로   \"album:내 앨범\"  띄어쓰기는 따옴표
-album:top          앨범 뷰의 맨 위 (맨 위 앨범들과 무소속 그림)
+album:top          앨범 뷰의 맨 위 (맨 위 앨범들, 맨 위에 둔 그림, 무소속 그림)
 is:trash  is:unscored  is:scored  is:tagged  is:untagged  is:missing
 added:today  added:yesterday  added:3d(최근 3일)  added:11-15  added>=2026-11-01   (imgr에 넣은 날)
 date:today  date<11-10 …                                                      (파일 시각 = 만든 날)
@@ -2602,7 +2593,7 @@ Ctrl+클릭 = 그 종류는 이것만.  오른쪽 클릭 = 메뉴.
   1~6 점수  0 지우기 (크게 보기에서는 점수 주면 다음 그림으로)
   T 태그 입력   F2 이름 바꾸기   Del 휴지통   Ctrl+Z 되돌리기
   Ctrl+C 복사 (탐색기·업로드 창에 붙여넣기도 됨)   Ctrl+X 잘라 두기   Ctrl+Shift+C 경로 복사
-  Ctrl+V  열린 앨범에: Ctrl+C 한 그림은 같이 들어감(여러 앨범), Ctrl+X 한 그림은 옮겨짐
+  Ctrl+V  열린 앨범(맨 위 포함)에: Ctrl+C 한 그림은 같이 들어감(여러 앨범), Ctrl+X 한 그림은 옮겨짐
           탐색기에서 복사한 파일은 가져오기 (앨범이 열려 있으면 거기에도 넣음)
   Ctrl+E 내보내기 (업로드용: jpg·메타데이터 지움·무작위 이름·태그 붙이기)
   Enter/Space 크게   C 비교   M 표 비교 (시드 × 프리셋)   A 앨범   Esc 뒤로 (앨범: 한 칸 위)
@@ -2632,7 +2623,7 @@ folder:00001      name:003640
 album:trip  album:none   pictures directly in album trip / in no album at all
 album:trip+         pictures of trip and its sub-albums (clicking an album on the left puts this in)
 album:trip/sea      with the path, if another album has the same name   \"album:my trip\"  quote names with spaces
-album:top          top of the Album view (top-level albums and pictures in no album)
+album:top          top of the Album view (top-level albums, pictures put at the top, pictures in no album)
 is:trash  is:unscored  is:scored  is:tagged  is:untagged  is:missing
 added:today  added:yesterday  added:3d (last 3 days)  added:11-15  added>=2026-11-01   (day added to imgr)
 date:today  date<11-10 ...                                                      (file time = day created)
@@ -2647,7 +2638,7 @@ Keys
   1~6 score  0 clear (in the Viewer, scoring moves on to the next picture)
   T enter tag   F2 rename   Del Trash   Ctrl+Z undo
   Ctrl+C copy (can be pasted into Explorer / upload windows)   Ctrl+X cut   Ctrl+Shift+C copy path
-  Ctrl+V  into an open album: pictures copied with Ctrl+C are added too (several albums), pictures cut with Ctrl+X are moved
+  Ctrl+V  into an open album (the top too): pictures copied with Ctrl+C are added too (several albums), pictures cut with Ctrl+X are moved
           files copied in Explorer are imported (and added to the open album, if any)
   Ctrl+E Export (for uploading: jpg, metadata removed, random names, add a tag)
   Enter/Space Viewer   C compare   M table compare (seed x preset)   A Albums   Esc back (Albums: up one level)

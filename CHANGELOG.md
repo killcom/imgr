@@ -1,5 +1,8 @@
 # 바뀐 것 / Changes
 
+## v0.26
+- 앨범 뷰의 맨 위(/)도 앨범처럼 그림을 둘 수 있음: 앨범에 든 그림을 맨 위에도 같이 (Ctrl+V, 끌어 놓기, 오른쪽 클릭 → 앨범 → / (맨 위)). 맨 위에서 Del = 맨 위에서만 빼기 — The Album view's top (/) holds pictures like an album: a picture in an album can sit at the top too (Ctrl+V, drag and drop, right-click → Album → / (top)). Del at the top removes it from the top only
+
 ## v0.25
 - 앨범 뷰 Shift+Del: 그림은 imgr 휴지통으로 (모든 앨범에서 안 보임), 앨범은 하위 앨범·안의 그림까지 (그림은 휴지통) — Shift+Del in Album view: pictures go to the imgr Trash (gone from every album); albums are deleted with their sub-albums and pictures (pictures to the Trash)
 - ⚙ 설정에서 Del ↔ Shift+Del 바꾸기 — Settings can swap Del and Shift+Del

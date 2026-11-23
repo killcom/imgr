@@ -997,7 +997,7 @@ dependencies = [
 
 [[package]]
 name = "imgr"
-version = "0.25.0"
+version = "0.26.0"
 dependencies = [
  "chrono",
  "clipboard-win",

@@ -804,10 +804,13 @@ Right-click: empty Trash"));
             });
             // albums of this picture: click = open that album
             let mut open_al: Option<u32> = None;
+            let mut open_top = false;
             ui.horizontal_wrapped(|ui| {
                 ui.label(egui::RichText::new(tr("앨범", "Album")).color(DIM));
                 if im.albums.is_empty() {
-                    ui.label(egui::RichText::new(tr("없음", "none")).color(DIM));
+                    ui.label(egui::RichText::new(tr("없음 (맨 위)", "none (top)")).color(DIM));
+                } else if im.albums.contains(&0) && ui.small_button(tr("/ (맨 위)", "/ (top)")).on_hover_text(tr("앨범 뷰의 맨 위 열기", "Open the album view's top")).clicked() {
+                    open_top = true;
                 }
                 for a in &im.albums {
                     if self.db.album(*a).is_some() && ui.small_button(self.db.album_path(*a)).on_hover_text(tr("이 앨범 열기", "Open this album")).clicked() {
@@ -817,6 +820,9 @@ Right-click: empty Trash"));
             });
             if let Some(a) = open_al {
                 self.open_album(Some(Some(a)));
+            }
+            if open_top {
+                self.open_album(None);
             }
             ui.horizontal_wrapped(|ui| {
                 let path = self.img_path(&im);

@@ -398,7 +398,7 @@ impl App {
         // elsewhere a drop adds them (Shift: move)
         let in_albums = self.view == View::Albums;
         let moves = |t: Option<u32>, from: Option<Option<u32>>| -> bool {
-            matches!(from, Some(f) if f != t) && t.is_some_and(|x| x != 0) && if in_albums { !ctrl } else { shift }
+            matches!(from, Some(f) if f != t) && t.is_some() && if in_albums { !ctrl } else { shift }
         };
         // an album being dragged is no place to drop it on
         let target = pos.and_then(|p| self.album_drop.iter().rev().find(|(a, r)| r.contains(p) && !a.is_some_and(|x| albums.contains(&x))).map(|x| x.0));
@@ -413,11 +413,9 @@ impl App {
                     }
                 }
                 if !ids.is_empty() {
-                    let from = self.cur_album();
-                    if let (Some(Some(f)), Some(0), true, false) = (from, t, in_albums, ctrl) {
-                        // onto / (the top): out of the album shown
-                        self.out_to_top(&ids, f);
-                    } else if moves(t, from) {
+                    // at the album view's top the pictures come from the top (album 0)
+                    let from = if in_albums { self.here() } else { self.cur_album() };
+                    if moves(t, from) {
                         self.move_to_album(&ids, from, t);
                     } else {
                         self.add_to_album(&ids, t);
@@ -452,10 +450,9 @@ impl App {
         if let Some(p) = pos {
             let what = Self::count_text(ids.len(), albums.len());
             let text = match target {
-                Some(Some(0)) if !ids.is_empty() && in_albums && !ctrl && matches!(self.cur_album(), Some(Some(_))) => trf!("{what} → 맨 위로 (이 앨범에서 빼기)", "{what} → top level (remove from this album)"),
-                Some(t) if !ids.is_empty() && moves(t, self.cur_album()) && in_albums => trf!("{what} → {} 로 옮기기   (Ctrl: 복사)", "{what} → move to {}   (Ctrl: copy)", self.album_label(t)),
+                Some(t) if !ids.is_empty() && moves(t, self.here()) && in_albums => trf!("{what} → {} 로 옮기기   (Ctrl: 복사)", "{what} → move to {}   (Ctrl: copy)", self.album_label(t)),
                 Some(t) if !ids.is_empty() && moves(t, self.cur_album()) => trf!("{what} → {} 로 옮기기", "{what} → move to {}", self.album_label(t)),
-                Some(t) if !ids.is_empty() && in_albums && t.is_some_and(|x| x != 0) && self.cur_album().is_some_and(|f| f != t) => trf!("{what} → {} 에 복사", "{what} → copy to {}", self.album_label(t)),
+                Some(t) if !ids.is_empty() && in_albums && t.is_some() && self.here().is_some_and(|f| f != t) => trf!("{what} → {} 에 복사", "{what} → copy to {}", self.album_label(t)),
                 Some(t) if !ids.is_empty() => trf!("{what} → {}   (Shift: 옮기기)", "{what} → {}   (Shift: move)", self.album_label(t)),
                 Some(t) => format!("{what} → {}", self.album_label(t)),
                 None if ids.is_empty() => trf!("{what}  (앨범 위에 놓기)", "{what}  (drop on an album)"),
@@ -661,13 +658,15 @@ impl App {
         });
         ui.menu_button(tr("앨범", "Album"), |ui| {
             let mut act: Option<(u32, bool)> = None;
-            let list: Vec<(u32, String, usize)> = self.album_rows();
-            if list.is_empty() {
+            let mut list: Vec<(u32, String, usize)> = self.album_rows();
+            // the album view's top: pictures can sit there and in albums at once
+            list.insert(0, (0, tr("/ (맨 위)", "/ (top)").to_string(), 0));
+            if list.len() == 1 {
                 ui.label(egui::RichText::new(tr("아직 앨범이 없음", "No albums yet")).color(DIM));
             }
             egui::ScrollArea::vertical().max_height(420.0).show(ui, |ui| {
                 for (id, name, depth) in &list {
-                    let all = ids.iter().filter_map(|x| self.img(x)).all(|i| i.albums.contains(id));
+                    let all = ids.iter().filter_map(|x| self.img(x)).all(|i| i.albums.contains(id) || (*id == 0 && i.albums.is_empty()));
                     let label = format!("{}{}{}", "    ".repeat(*depth), if all { "✓ " } else { "" }, name);
                     if ui.button(label).on_hover_text(if all { tr("누르면 이 앨범에서 뺌", "Click to remove from this album") } else { tr("누르면 이 앨범에 넣음", "Click to add to this album") }).clicked() {
                         act = Some((*id, all));
@@ -747,7 +746,7 @@ impl App {
         ui.separator();
         let all_trash = ids.iter().filter_map(|id| self.img(id)).all(|i| i.trash);
         // album view inside an album: Del takes the pictures out of this album only
-        let here = match self.cur_album() {
+        let here = match self.here() {
             Some(Some(x)) if self.view == View::Albums => Some(x),
             _ => None,
         };
