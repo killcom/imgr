@@ -330,22 +330,6 @@ impl Db {
         v
     }
 
-    pub fn counts_by(&self, f: impl Fn(&Img) -> &str) -> Vec<(String, usize)> {
-        let mut m: HashMap<String, usize> = HashMap::new();
-        for i in &self.images {
-            if i.missing || i.trash {
-                continue;
-            }
-            let k = f(i);
-            if !k.is_empty() {
-                *m.entry(k.to_string()).or_default() += 1;
-            }
-        }
-        let mut v: Vec<(String, usize)> = m.into_iter().collect();
-        v.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
-        v
-    }
-
     /// Merge a finished scan into the records.
     /// `held` = nothing was marked missing: the scan had read errors, or (when
     /// not `sure`) so many pictures vanished at once that it is probably a

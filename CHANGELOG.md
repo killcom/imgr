@@ -1,5 +1,16 @@
 # 바뀐 것 / Changes
 
+## v0.29
+- 검색칸에 치는 동안 마지막 말은 그 글자로 시작하는 태그·해시태그도 보임 (so → solo), Enter = 정확히 — while typing, the last word also matches tags / hashtags starting with it; Enter = exactly
+- OR 모드면 콤마로 나눈 태그·해시태그는 하나라도 맞으면 됨 (필터와 - 조건은 그대로 좁힘) — in OR mode comma-separated tags and hashtags match if any one does (filters and - conditions still narrow)
+- 검색 뷰 클릭(OR)은 같은 종류의 조건에만 | 로 붙음 — OR clicks in Search view join only a condition of the same kind
+- 저장한 검색·최근 검색은 OR 를 a|b 로 적어 둠; 앨범을 오가는 것은 최근 검색에 안 쌓임 — saved and recent searches spell OR out as a|b; moving between albums no longer fills Recent searches
+- 그림과 앨범을 같이 고르고 Del = 한 번 묻고 OK 때 같이 처리 — Del with pictures and albums selected asks once and does both on OK
+- 앨범 옮기기·지우기·이름 바꾸기·가져오기 뒤 Ctrl+Z 는 되돌릴 수 없다고 알림 (예전 것을 몰래 되돌리지 않음) — Ctrl+Z after an album move / delete / rename or an import says it cannot be undone instead of quietly undoing an older edit
+- 검색 뷰 목록 숫자가 '태그 여부' 거름을 따름; 검색 뷰에서는 album: 을 쳐도 거름 적용 — Search view counts follow the Workflow-info filter; typed album: words are filtered the same way
+- 그림 오른쪽 클릭 → 앨범 ✓ 해제 = Del 과 같은 규칙; 같은 앨범에 붙여넣기 해도 잘라 둔 것 유지; 검색 뷰에서 잘라 둔 그림은 붙일 때 다른 앨범을 지우지 않음 — the Album submenu ✓ follows the Del rule; a cut survives a paste into the same album; a cut from Search view keeps its other albums
+- '＋ 가져오기'도 열린 앨범에 넣음; 휴지통에 있는 그림을 다시 가져오면 알려 줌; 해시태그 이름을 바꾸면 a|b 안과 최근 검색도 따라 바뀜; 오른쪽 해시태그 칩 = 검색에 넣기·빼기 — the Import dialog puts pictures into the open album; re-importing a trashed picture says so; hashtag renames reach a|b groups and recent searches; the right-panel tag chip adds to / removes from the search
+
 ## v0.28
 - 문장으로 된 프롬프트(Anima 등)도 문장 끝 마침표에서 태그를 나눔: "solo. A girl. jojo pose"에서 solo·jojo pose가 검색됨 — sentence prompts (Anima etc.) are also split into tags at full stops ending a sentence, so solo and jojo pose in "solo. A girl. jojo pose" are found
 

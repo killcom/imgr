@@ -587,11 +587,11 @@ impl App {
         ui.separator();
         let (light_key, strong_key) = self.del_keys();
         if ui.button(trf!("앨범 지우기… (그림은 그대로)    {}", "Delete album… (pictures are kept)    {}", light_key)).clicked() {
-            self.modal = Some(Modal::AlbumDelete { ids: ids.clone(), with_pics: false });
+            self.modal = Some(Modal::AlbumDelete { ids: ids.clone(), with_pics: false, pics: Vec::new() });
             ui.close();
         }
         if ui.button(trf!("앨범과 안의 그림까지 지우기… (그림은 imgr 휴지통)    {}", "Delete album with its pictures… (to the imgr Trash)    {}", strong_key)).clicked() {
-            self.modal = Some(Modal::AlbumDelete { ids, with_pics: true });
+            self.modal = Some(Modal::AlbumDelete { ids, with_pics: true, pics: Vec::new() });
             ui.close();
         }
     }
@@ -668,7 +668,16 @@ impl App {
                 for (id, name, depth) in &list {
                     let all = ids.iter().filter_map(|x| self.img(x)).all(|i| i.albums.contains(id) || (*id == 0 && i.albums.is_empty()));
                     let label = format!("{}{}{}", "    ".repeat(*depth), if all { "✓ " } else { "" }, name);
-                    if ui.button(label).on_hover_text(if all { tr("누르면 이 앨범에서 뺌", "Click to remove from this album") } else { tr("누르면 이 앨범에 넣음", "Click to add to this album") }).clicked() {
+                    // a picture in no album is always at the top: nothing to take it out of
+                    let fixed = *id == 0 && all && ids.iter().filter_map(|x| self.img(x)).any(|i| i.albums.is_empty());
+                    let tip = if fixed {
+                        tr("앨범에 없는 그림은 늘 맨 위에 보임", "Pictures in no album always show at the top")
+                    } else if all {
+                        tr("누르면 이 앨범에서 뺌 (Del 과 같음)", "Click to remove from this album (same as Del)")
+                    } else {
+                        tr("누르면 이 앨범에 넣음", "Click to add to this album")
+                    };
+                    if ui.add_enabled(!fixed, egui::Button::new(label)).on_hover_text(tip).on_disabled_hover_text(tip).clicked() {
                         act = Some((*id, all));
                         ui.close();
                     }
@@ -690,10 +699,7 @@ impl App {
             }
             if let Some((id, all)) = act {
                 if all {
-                    let name = self.album_label(Some(id));
-                    self.edit(&ids, &trf!("앨범 '{name}'에서 빼기", "Remove from album '{name}'"), |im| im.albums.retain(|&a| a != id));
-                    self.notice(trf!("{}장을 '{name}'에서 뺌 (Ctrl+Z 되돌리기)", "Removed {} pictures from '{name}' (Ctrl+Z to undo)", ids.len()), false);
-                    self.refilter(true);
+                    self.take_out_here(&ids, id);
                 } else {
                     self.add_to_album(&ids, Some(id));
                 }

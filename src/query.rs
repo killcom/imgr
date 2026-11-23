@@ -19,6 +19,8 @@ use crate::db::Img;
 #[derive(Debug, Clone, PartialEq)]
 enum Atom {
     Tag(String),
+    /// a hashtag still being typed: tags starting with it
+    TagStart(String),
     Score(Cmp, u8),
     Preset(String),
     Ckpt(String),
@@ -451,21 +453,86 @@ fn parse_atoms(w: &str) -> Vec<Atom> {
     parse_atom(w).into_iter().collect()
 }
 
+/// A condition that OR mode joins: a positive prompt tag or hashtag (filters such as
+/// score:, album:, ckpt: and '-' conditions always narrow).
+fn tag_like(neg: bool, any: &[Atom]) -> bool {
+    !neg && !any.is_empty() && any.iter().all(|a| matches!(a, Atom::Text { .. } | Atom::Tag(_) | Atom::TagStart(_)))
+}
+
+/// The search as written to be kept (saved filter, recent searches): in OR mode the
+/// comma-separated tags become one explicit a|b condition, so it means the same in AND mode.
+pub fn explicit(s: &str, or: bool) -> String {
+    if !or {
+        return s.trim().to_string();
+    }
+    let words = split_words(s);
+    let is_tag = |w: &String| {
+        let neg = w.starts_with('-') && w.len() > 1;
+        let any: Vec<Atom> = w.split('|').flat_map(parse_atoms).collect();
+        tag_like(neg, &any)
+    };
+    let tags: Vec<String> = words.iter().filter(|w| is_tag(w)).cloned().collect();
+    if tags.len() < 2 {
+        return s.trim().to_string();
+    }
+    let mut out = vec![tags.join("|")];
+    out.extend(words.into_iter().filter(|w| !is_tag(w)));
+    join_words(out)
+}
+
 impl Query {
     pub fn parse(s: &str) -> Query {
+        Query::parse_with(s, false, false)
+    }
+
+    /// `or`: the [AND|OR] switch is on OR, so commas between prompt tags / hashtags mean
+    /// "any of them". `live`: the search box is being typed in, so its last word is not
+    /// finished yet: a prompt tag there matches tags starting with it ("so" -> solo),
+    /// and an unfinished '-' condition is left out until it is done.
+    pub fn parse_with(s: &str, or: bool, live: bool) -> Query {
         let mut q = Query::default();
-        for w in split_words(s) {
+        let words = split_words(s);
+        let open = live && !s.trim_end().ends_with([',', '|']);
+        let last = words.len();
+        let mut joined: Option<usize> = None;
+        for (k, w) in words.into_iter().enumerate() {
+            let typing = open && k + 1 == last;
+            // a '-' on its own: a condition still to be written
+            if w.chars().all(|c| c == '-') {
+                continue;
+            }
             let (neg, body) = match w.strip_prefix('-') {
                 Some(b) if !b.is_empty() => (true, b),
                 _ => (false, w.as_str()),
             };
+            if typing && neg {
+                continue;
+            }
             if let Some(k) = body.to_lowercase().strip_prefix("sort:") {
                 q.sort = Sort::from_key(k);
                 continue;
             }
-            let any: Vec<Atom> = body.split('|').flat_map(parse_atoms).collect();
+            let mut any: Vec<Atom> = body.split('|').flat_map(parse_atoms).collect();
             if any.is_empty() {
                 continue;
+            }
+            if typing {
+                match any.last_mut() {
+                    Some(Atom::Text { any_after, .. }) => *any_after = true,
+                    Some(a @ Atom::Tag(_)) => {
+                        if let Atom::Tag(t) = a {
+                            *a = Atom::TagStart(std::mem::take(t));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            if or && tag_like(neg, &any) {
+                if let Some(j) = joined {
+                    q.terms[j].any.extend(any);
+                    continue;
+                }
+                joined = Some(q.terms.len());
             }
             for a in &any {
                 if !neg {
@@ -500,6 +567,7 @@ impl Query {
 fn atom(a: &Atom, i: &Img, q: &Query) -> bool {
     match a {
         Atom::Tag(t) => i.tags.iter().any(|x| x == t),
+        Atom::TagStart(t) => i.tags.iter().any(|x| x.starts_with(t.as_str())),
         Atom::Time { mtime, lo, hi } => {
             let t = if *mtime { i.mtime as i64 } else { i.added };
             t >= *lo && t < *hi
@@ -602,7 +670,10 @@ pub fn click_item(q: &str, item: &str, same: &[&str], or: bool) -> String {
     }
     let neg = format!("-{item}");
     let mut v: Vec<String> = split_words(q).into_iter().filter(|w| !w.eq_ignore_ascii_case(&neg)).collect();
-    let last = v.iter().rposition(|w| !w.starts_with('-') && !w.to_lowercase().starts_with("sort:"));
+    // OR: joined to the last condition of the same kind (#tags with #tags, ckpt: with ckpt: ...);
+    // with none, it is a new condition (filters of other kinds still narrow)
+    let kind = word_kind(item);
+    let last = v.iter().rposition(|w| !w.starts_with('-') && word_kind(w) == kind);
     match last {
         Some(k) if or => {
             v[k].push('|');
@@ -611,6 +682,61 @@ pub fn click_item(q: &str, item: &str, same: &[&str], or: bool) -> String {
         _ => v.push(item.to_string()),
     }
     join_words(v)
+}
+
+/// What kind of condition a word is: "#", a key ("ckpt", "album" ...) or "" for a prompt tag.
+fn word_kind(w: &str) -> String {
+    let first = w.split('|').next().unwrap_or("").trim_start_matches('-').to_lowercase();
+    if first.starts_with('#') {
+        return "#".into();
+    }
+    match first.split_once([':', '=', '<', '>']) {
+        Some((k, _)) if KEYS.contains(&k) => if k == "앨범" { "album".into() } else { k.to_string() },
+        _ => String::new(),
+    }
+}
+
+/// The word still being typed at the end of the search (shown as a hint), if it is
+/// a prompt tag or hashtag that is matched as a beginning.
+pub fn typing_word(s: &str) -> Option<String> {
+    if s.trim().is_empty() || s.trim_end().ends_with([',', '|']) {
+        return None;
+    }
+    let w = split_words(s).pop()?;
+    let last = w.rsplit('|').next()?.to_string();
+    let any = parse_atoms(&last);
+    (!w.starts_with('-') && matches!(any.as_slice(), [Atom::Text { .. }] | [Atom::Tag(_)])).then_some(last)
+}
+
+/// Kept searches (saved filters, recent searches) are written in AND form (`explicit`):
+/// true when picking one should turn the switch to AND (it has commas between tags).
+pub fn wants_and(q: &str) -> bool {
+    split_words(q)
+        .iter()
+        .filter(|w| {
+            let neg = w.starts_with('-') && w.len() > 1;
+            let any: Vec<Atom> = w.split('|').flat_map(parse_atoms).collect();
+            tag_like(neg, &any)
+        })
+        .count()
+        >= 2
+}
+
+/// The search with hashtag #old renamed #new (also inside a|b and after '-').
+pub fn rename_hashtag(q: &str, old: &str, new: &str) -> String {
+    let (o, n) = (format!("#{}", old.to_lowercase()), format!("#{new}"));
+    let words: Vec<String> = split_words(q)
+        .into_iter()
+        .map(|w| {
+            let (neg, body) = match w.strip_prefix('-') {
+                Some(b) => ("-", b.to_string()),
+                None => ("", w.clone()),
+            };
+            let parts: Vec<String> = body.split('|').map(|p| if p.to_lowercase() == o { n.clone() } else { p.to_string() }).collect();
+            format!("{neg}{}", parts.join("|"))
+        })
+        .collect();
+    join_words(words)
 }
 
 /// Ctrl+click: this item as the only condition of its kind (`key`: "#", "ckpt:", "album:" ...).
@@ -897,11 +1023,60 @@ mod tests {
     }
 
     #[test]
+    fn or_mode_and_typing() {
+        let mut i = img();
+        i.prompt = "1girl, solo, frills".into();
+        i.tags = vec!["pixiv".into()];
+        let m = |q: &str, or: bool, live: bool| Query::parse_with(q, or, live).matches(&i);
+        // typing: the last word is a beginning
+        assert!(!m("1girl, so", false, false));
+        assert!(m("1girl, so", false, true));
+        assert!(m("1girl, sol", false, true));
+        assert!(!m("1girl, so, ", false, true));
+        assert!(m("1girl, -so", false, true));
+        assert!(m("1girl, -", false, true));
+        assert!(m("long ha", false, true) == false);
+        // OR mode: commas between tags mean either, filters still narrow
+        assert!(!m("frills, ribbon", false, false));
+        assert!(m("frills, ribbon", true, false));
+        assert!(m("ribbon, #pixiv", true, false));
+        assert!(!m("ribbon, bow", true, false));
+        assert!(!m("frills, ribbon, score>=5", true, false));
+        assert!(m("frills, ribbon, score>=3", true, false));
+        assert!(!m("frills, ribbon, -solo", true, false));
+        assert!(m("ribbon, fri", true, true));
+        // kept searches spell OR out
+        assert_eq!(explicit("frills, ribbon, score>=3", true), "frills|ribbon, score>=3");
+        assert_eq!(explicit("frills, ribbon", false), "frills, ribbon");
+        assert_eq!(explicit("frills, -solo", true), "frills, -solo");
+        assert!(Query::parse(&explicit("frills, ribbon", true)).matches(&i));
+    }
+
+    #[test]
+    fn typing_more_and_kinds() {
+        let mut i = img();
+        i.prompt = "1girl, long hair".into();
+        let m = |q: &str, or: bool, live: bool| Query::parse_with(q, or, live).matches(&i);
+        assert!(m("1girl, long ", false, true));
+        assert!(m("1girl, long h", false, true));
+        assert!(m("#pix", false, true) && !m("#pix", false, false));
+        assert!(m("#pix, ", false, true) == false);
+        // OR clicks join the same kind only
+        assert_eq!(click_item("1girl, solo", "ckpt:x", &[], true), "1girl, solo, ckpt:x");
+        assert_eq!(click_item("score>=4", "#p", &[], true), "score>=4, #p");
+        assert_eq!(click_item("#a, score>=4", "#p", &[], true), "#a|#p, score>=4");
+        assert_eq!(click_item("ckpt:a, #b", "ckpt:x", &[], true), "ckpt:a|ckpt:x, #b");
+        assert_eq!(click_item("ckpt:a", "ckpt:x", &[], false), "ckpt:a, ckpt:x");
+        assert!(wants_and("a, b, score>=3") && !wants_and("a|b, score>=3"));
+        assert_eq!(rename_hashtag("#old, x|#Old, -#old", "old", "new"), "#new, x|#new, -#new");
+    }
+
+    #[test]
     fn clicks_and_or() {
         assert_eq!(click_item("", "#a", &[], false), "#a");
         assert_eq!(click_item("#a", "#b", &[], false), "#a, #b");
         assert_eq!(click_item("#a", "#b", &[], true), "#a|#b");
-        assert_eq!(click_item("#a|#b", "ckpt:x", &[], true), "#a|#b|ckpt:x");
+        assert_eq!(click_item("#a|#b", "ckpt:x", &[], true), "#a|#b, ckpt:x");
         assert_eq!(click_item("#a|#b, long hair", "#b", &[], true), "#a, long hair");
         assert_eq!(click_item("#a, sort:new", "#b", &[], true), "#a|#b, sort:new");
         assert_eq!(click_item("#a, -#c", "#b", &[], true), "#a|#b, -#c");

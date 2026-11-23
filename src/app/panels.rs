@@ -17,19 +17,20 @@ impl App {
             if r.clicked() {
                 self.modal = Some(Modal::Settings { per_folder: self.settings.per_folder.to_string(), ctl: self.settings.ctl });
             }
-            // [AND | OR]: how a click in 검색 뷰 adds its item to the search
+            // [AND | OR]: what commas between tags mean, and how a click in 검색 뷰 adds its item
             let or = self.settings.search_or;
             let t = egui::RichText::new(if or { "OR" } else { "AND" }).strong().color(Color32::WHITE);
             let r = ui
                 .add(egui::Button::new(t).fill(if or { Color32::from_rgb(150, 95, 40) } else { Color32::from_rgb(45, 90, 140) }).min_size(vec2(44.0, 0.0)))
                 .on_hover_text(if or {
-                    tr("OR: 검색 뷰에서 누른 항목이 마지막 조건에 | 로 붙음 (하나라도 맞으면)\n클릭: AND 로", "OR: an item clicked in Search view joins the last condition with | (either one)\nClick: switch to AND")
+                    tr("OR: 콤마로 나눈 태그·해시태그 중 하나라도 맞으면 보임\n(점수·앨범 같은 필터와 - 조건은 그래도 좁힘)\n검색 뷰에서 누른 항목도 마지막 조건에 | 로 붙음\n클릭: AND 로", "OR: pictures matching any one of the comma-separated tags / hashtags\n(filters like score or album and - conditions still narrow)\nItems clicked in Search view join the last condition with |\nClick: switch to AND")
                 } else {
-                    tr("AND: 검색 뷰에서 누른 항목이 새 조건으로 붙음 (모두 맞아야)\n클릭: OR 로", "AND: an item clicked in Search view is added as a new condition (all must match)\nClick: switch to OR")
+                    tr("AND: 콤마로 나눈 조건이 모두 맞아야 보임\n검색 뷰에서 누른 항목은 새 조건으로 붙음\n클릭: OR 로", "AND: pictures matching all comma-separated conditions\nItems clicked in Search view are added as a new condition\nClick: switch to OR")
                 });
             self.mark("and_or", r.rect);
             if r.clicked() {
                 self.settings.search_or = !or;
+                self.refilter(true);
             }
             // the room right of the switch (a wrapped row reports the whole row as available)
             let room = ui.max_rect().right() - r.rect.right() - ui.spacing().item_spacing.x;
@@ -53,12 +54,33 @@ impl App {
                 if matches!(self.view, View::Viewer | View::Compare) {
                     self.view = View::Grid;
                 }
+                // typed: the last word is unfinished until Enter / leaving the box
+                self.search_live = resp.has_focus();
                 self.refilter(false);
                 self.settings.query = self.query_text.clone();
             }
-            if resp.lost_focus() {
-                let q = self.query_text.clone();
+            if resp.lost_focus() && self.search_live {
+                // Enter: done, the last word is that exact tag. Clicking elsewhere keeps the
+                // pictures as they are shown (the last word stays a beginning, see the hint)
+                if ui.input(|i| i.key_pressed(Key::Enter)) {
+                    self.search_live = false;
+                    self.refilter(true);
+                }
+                let q = query::explicit(&self.query_text, self.settings.search_or);
                 self.settings.push_search(&q);
+            }
+            if self.search_live {
+                if let Some(w) = query::typing_word(&self.query_text) {
+                    let hint = trf!("'{w}'(으)로 시작하는 것도 · Enter = 정확히", "also tags starting with '{w}' · Enter = exactly");
+                    let font = egui::FontId::proportional(11.5);
+                    let g = ui.painter().layout_no_wrap(hint, font, DIM);
+                    let typed_w = ui.painter().layout_no_wrap(self.query_text.clone(), egui::FontId::proportional(14.0), DIM).size().x;
+                    // only where it does not cover the text
+                    if typed_w + g.size().x + 30.0 < resp.rect.width() {
+                        let p = egui::pos2(resp.rect.right() - g.size().x - 8.0, resp.rect.center().y - g.size().y / 2.0);
+                        ui.painter().galley(p, g, DIM);
+                    }
+                }
             }
             if resp.has_focus() && ui.input(|i| i.key_pressed(Key::Escape)) {
                 resp.surrender_focus();
@@ -75,7 +97,7 @@ impl App {
                 }
             });
             if let Some(q) = pick {
-                self.set_query(q);
+                self.pick_kept_search(q);
             }
             let r = ui.add_enabled(!self.query_text.is_empty(), egui::Button::new("✕")).on_hover_text(tr("검색 지우기", "Clear search"));
             if r.clicked() {
@@ -159,17 +181,17 @@ impl App {
                 for k in 0..n {
                     let f = self.db.saved[k].clone();
                     let r = ui
-                        .selectable_label(q.trim() == f.query.trim(), format!("▸ {}", f.name))
+                        .selectable_label(query::explicit(&q, or) == f.query.trim(), format!("▸ {}", f.name))
                         .on_hover_text(trf!("{}\n(오른쪽 클릭: 메뉴)", "{}\n(right-click: menu)", f.query));
                     if r.clicked() {
-                        new_q = Some(f.query.clone());
+                        action = Some(LeftAction::PickFilter(f.query.clone()));
                     }
                     r.context_menu(|ui| {
                         if ui.button(tr("이름 바꾸기", "Rename")).clicked() {
                             action = Some(LeftAction::RenameFilter(k));
                             ui.close();
                         }
-                        if ui.add_enabled(!q.trim().is_empty() && q.trim() != f.query.trim(), egui::Button::new(tr("지금 검색으로 바꾸기", "Replace with current search"))).clicked() {
+                        if ui.add_enabled(!q.trim().is_empty() && query::explicit(&q, or) != f.query.trim(), egui::Button::new(tr("지금 검색으로 바꾸기", "Replace with current search"))).clicked() {
                             action = Some(LeftAction::UpdateFilter(k));
                             ui.close();
                         }
@@ -246,18 +268,18 @@ Click: show only these", self.score_counts[0]));
                 }
             });
 
-            egui::CollapsingHeader::new(egui::RichText::new(trf!("해시태그 {}", "Hashtags {}", self.tag_counts.len())).color(ACCENT).strong())
+            egui::CollapsingHeader::new(egui::RichText::new(trf!("해시태그 {}", "Hashtags {}", self.tag_list_counts.len())).color(ACCENT).strong())
                 .id_salt("sec_tags")
                 .default_open(true)
                 .show(ui, |ui| {
-                    if self.tag_counts.is_empty() {
+                    if self.tag_list_counts.is_empty() {
                         ui.label(egui::RichText::new(tr("아직 없음. 그림을 고르고 T 를 눌러 붙이세요", "None yet. Pick a picture and press T to add one")).color(DIM).small());
                     }
                     ui.horizontal_wrapped(|ui| {
-                        if !self.tag_counts.is_empty() && ui.selectable_label(query::has_item(&q, &["is:untagged"]), tr("해시태그 없음", "no hashtags")).on_hover_text(tr("해시태그가 하나도 없는 그림", "Pictures without any hashtag")).clicked() {
+                        if !self.tag_list_counts.is_empty() && ui.selectable_label(query::has_item(&q, &["is:untagged"]), tr("해시태그 없음", "no hashtags")).on_hover_text(tr("해시태그가 하나도 없는 그림", "Pictures without any hashtag")).clicked() {
                             new_q = Some(query::click_item(&q, "is:untagged", &[], or));
                         }
-                        for (t, n) in &self.tag_counts {
+                        for (t, n) in &self.tag_list_counts {
                             let w = format!("#{t}");
                             let neg = format!("-#{t}");
                             let on = query::has_item(&q, &[&w]);
@@ -326,12 +348,18 @@ Both on = all, only one on = just those (not applied in Album view)"));
         });
         if let Some(a) = action {
             match a {
+                LeftAction::PickFilter(fq) => {
+                    if self.view == View::Albums {
+                        self.view = View::Grid;
+                    }
+                    self.pick_kept_search(fq);
+                }
                 LeftAction::RenameFilter(k) => {
                     let name = self.db.saved[k].name.clone();
                     self.modal = Some(Modal::RenameFilter { idx: k, name });
                 }
                 LeftAction::UpdateFilter(k) => {
-                    self.db.saved[k].query = self.query_text.trim().to_string();
+                    self.db.saved[k].query = query::explicit(&self.query_text, self.settings.search_or);
                     self.dirty = true;
                     self.notice(trf!("필터 '{}'를 지금 검색으로 바꿈", "Filter '{}' replaced with the current search", self.db.saved[k].name), false);
                 }
@@ -341,6 +369,7 @@ Both on = all, only one on = just those (not applied in Album view)"));
                     self.dirty = true;
                 }
                 LeftAction::DeleteFilter(k) => {
+                    self.undo_barrier(tr("저장한 검색 지우기", "Delete saved search"));
                     let f = self.db.saved.remove(k);
                     self.dirty = true;
                     self.notice(trf!("필터 '{}' 지움 ({})", "Filter '{}' deleted ({})", f.name, f.query), false);
@@ -349,6 +378,7 @@ Both on = all, only one on = just those (not applied in Album view)"));
                 LeftAction::Kind(wf, plain) => {
                     self.settings.kind_wf = wf;
                     self.settings.kind_plain = plain;
+                    self.counts_dirty = true;
                     if self.view == View::Albums {
                         self.view = View::Grid;
                         self.set_query(query::without_album(&self.query_text));
@@ -363,7 +393,7 @@ Both on = all, only one on = just those (not applied in Album view)"));
                     let name = self.album_label(Some(id));
                     self.modal = Some(Modal::AlbumRename { id, new: name });
                 }
-                LeftAction::DeleteAlbum(id) => self.modal = Some(Modal::AlbumDelete { ids: vec![id], with_pics: false }),
+                LeftAction::DeleteAlbum(id) => self.modal = Some(Modal::AlbumDelete { ids: vec![id], with_pics: false, pics: Vec::new() }),
                 LeftAction::MoveAlbum(id, parent) => {
                     if self.db.move_album(id, parent) {
                         self.dirty = true;
@@ -431,7 +461,7 @@ Both on = all, only one on = just those (not applied in Album view)"));
         }
         // 검색 뷰 only: 무소속 (in the 앨범 뷰 those pictures sit at the top, after the albums)
         if !nav {
-            let (r, _) = tree_row(ui, base, trf!("무소속 {}", "No album {}", self.unfiled_n), is_on("none"), None, "album_none");
+            let (r, _) = tree_row(ui, base, trf!("무소속 {}", "No album {}", self.unfiled_kind_n), is_on("none"), None, "album_none");
             let r = r.on_hover_text(tr("어느 앨범에도 없는 그림\n클릭: 검색에 더하기·빼기 (AND·OR 대로) / Ctrl+클릭: 앨범은 이것만\n그림을 여기 끌어다 놓으면 모든 앨범에서 빠짐", "Pictures in no album\nClick: add to / take out of the search (AND or OR) / Ctrl+click: only this album\nDrop pictures here to remove them from all albums"));
             self.mark("album_none", r.rect);
             self.album_drop.push((None, r.rect.intersect(ui.clip_rect())));
@@ -655,7 +685,7 @@ Right-click: empty Trash"));
                     let partial = ids.len() > 1 && *n < ids.len();
                     let label = if partial { format!("#{t} ({n})") } else { format!("#{t}") };
                     ui.spacing_mut().item_spacing.x = 0.0;
-                    let r = ui.add(egui::Button::new(egui::RichText::new(label).color(TEXT)).fill(TAG_BG)).on_hover_text(if partial { tr("일부에만 있음. 클릭: 이 태그로 찾기 / 오른쪽 클릭: 모두에 붙이기", "On some only. Click: search this tag / right-click: add to all") } else { tr("클릭: 이 태그로 찾기", "Click: search this tag") });
+                    let r = ui.add(egui::Button::new(egui::RichText::new(label).color(TEXT)).fill(TAG_BG)).on_hover_text(if partial { tr("일부에만 있음. 클릭: 검색에 넣기·빼기 / 오른쪽 클릭: 모두에 붙이기", "On some only. Click: add to / remove from the search / right-click: add to all") } else { tr("클릭: 검색에 넣기·빼기", "Click: add to / remove from the search") });
                     if r.clicked() {
                         search_tag = Some(t.clone());
                     }
@@ -671,7 +701,7 @@ Right-click: empty Trash"));
                 }
             });
             if let Some(t) = search_tag {
-                let q = query::toggle_word(&self.query_text, &format!("#{t}"));
+                let q = query::click_item(&self.query_text, &format!("#{t}"), &[], self.settings.search_or);
                 self.set_query(q);
             }
             // tag input with suggestions (Tab = first suggestion)
@@ -843,7 +873,8 @@ Right-click: empty Trash"));
                 if ui.button(tr("내보내기", "Export")).on_hover_text(tr("업로드용 복사 (Ctrl+E)", "Copy for uploading (Ctrl+E)")).clicked() {
                     self.open_export();
                 }
-                let trash_lbl = if im.trash { tr("되살리기", "Restore") } else { tr("휴지통 (Del)", "Trash (Del)") };
+                let trash_key = if self.view == View::Albums { self.del_keys().1 } else { "Del" };
+                let trash_lbl = if im.trash { tr("되살리기", "Restore").to_string() } else { trf!("휴지통 ({trash_key})", "Trash ({trash_key})") };
                 if ui.button(trash_lbl).clicked() {
                     self.set_trash(!im.trash);
                 }
@@ -904,6 +935,8 @@ Right-click: empty Trash"));
 }
 
 enum LeftAction {
+    /// a saved filter clicked
+    PickFilter(String),
     RenameFilter(usize),
     UpdateFilter(usize),
     MoveFilter(usize, isize),

@@ -27,8 +27,9 @@ Left: 🗂 Album view (/ = top level · album tree · Trash. You can click anywh
       ▦ Search view (Show all · saved searches · score (N/A = no score) · hashtag · album · checkpoint · LoRA · Workflow info · folder) (click a title to collapse it)
   Workflow info: workflow = pictures that contain ComfyUI info (prompt, checkpoint, seed); no workflow = pictures without that info (jpg etc.).
              Both on shows everything, only one on shows only that. At first only workflow is on. Not applied in Album view or Trash.
+             The numbers in the Search view lists follow this filter too (the same as what a click shows).
   (folder = a real folder in imgs, 00001… / album = a grouping used only inside imgr)
-  Checkpoint, LoRA, folder: click = show only that one, Ctrl+click = show several together (shown if it matches any of them)
+  Hashtag, checkpoint, LoRA, folder, album: click = add to / remove from the search (by the AND/OR switch), Ctrl+click = only this of its kind
 Right: preview of the selected picture · prompt · score · hashtags · info (path = folder/file name inside imgs)
   "Show in Explorer" = opens the folder in imgs that contains the picture and selects it
 Drag the borders of the side panels with the mouse to change their width. Dragging the handle (▧) at the bottom-left corner of the right preview
@@ -132,10 +133,14 @@ added:today  added:yesterday  added:3d (last 3 days)  added>=11-01  = date added
 date:2026-11-15  date<2026-01-01  = file date
 sort:new / old / name / score / seed / size / random   (if the search has sort:, the sort box shows "(search)")
 Conditions are separated by commas: long hair, scar, #pixiv = all must match. a|b = either one.
+With OR left of the search box, comma-separated tags and hashtags match if any one does (filters like score or album and - conditions still narrow).
+While typing, the last word also shows tags starting with it (so → solo, #pix → #pixiv; a small hint at the right of the box).
+Enter = done (exactly that tag). Clicking elsewhere keeps the pictures as shown.
+Saved and recent searches spell OR out as a|b, so they mean the same whenever they are picked (picking one with commas turns the switch to AND).
 Any other text finds a whole prompt tag (space = _, case and weights ignored; hashtags and preset names too).
 A prompt is split at commas, line breaks and full stops ending a sentence: "solo. A girl. jojo pose" → solo / a girl / jojo pose.
 __scar__ / __scar / scar__ = tags containing / ending with / starting with scar. File names: name:, checkpoints: ckpt:
-Clicking an item in the left list adds it to or removes it from the search: AND (left of the search box) = a new condition, OR = joined to the last one with | (either).
+Clicking an item in the left list adds it to or removes it from the search: AND (left of the search box) = a new condition, OR = joined with | to the last condition of the same kind (either; filters of other kinds still narrow).
 Ctrl+click = only this of its kind. Right-click = 'without this' (for score, 'or higher').
 For frequent searches use "＋ Save current search as filter" on the left. Right-click a saved search = rename · overwrite with current search · reorder · delete.
 ▾ = reuse a recent search.
@@ -161,11 +166,12 @@ Click a cell, move with arrow keys, 1~6 score, double-click = view large. Right-
 
 ```text
 One picture can be in several albums at once. You can also make sub-albums inside an album.
-"No album" = pictures that are in no album. Pictures never go there automatically. Adding, removing and moving can be undone with Ctrl+Z.
+"No album" = pictures that are in no album. Pictures never go there automatically. Adding, removing and moving pictures can be undone with Ctrl+Z.
+Moving, deleting and renaming albums and importing are not undone by Ctrl+Z (Ctrl+Z says so; press it again for the step before).
 There are two ways to view:
   🗂 Album view = see albums as folder cells, like Explorer (A, / and the albums in the left Album view)
   ▦ Search view = search across all pictures (Esc, "Show all" on the left). "Album" in the left Search view works like checkpoint:
-              click = only that album (including pictures of its sub-albums), Ctrl+click = several albums together (pictures of all chosen albums are shown), click again when only one is chosen = remove it.
+              click = add that album (including pictures of its sub-albums) to / remove it from the search (by AND/OR), Ctrl+click = only that album.
               It filters together with other filters (score, tag, checkpoint…)
 Album view:
   The top level (/) shows the top-level albums, then the pictures put at the top and those in no album (No album).

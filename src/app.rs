@@ -107,7 +107,8 @@ enum Modal {
     /// a new album under `parent` (0 = top); made only on 만들기. `put`: pictures to put in it
     AlbumNew { parent: u32, new: String, put: Vec<String> },
     /// with_pics: the albums' pictures (sub albums too) go to the imgr Trash as well
-    AlbumDelete { ids: Vec<u32>, with_pics: bool },
+    /// `pics`: pictures selected with the albums (Del on both), handled on OK too
+    AlbumDelete { ids: Vec<u32>, with_pics: bool, pics: Vec<String> },
     /// ⚙ 설정
     Settings { per_folder: String, ctl: bool },
 }
@@ -258,8 +259,15 @@ pub struct App {
     tag_input: String,
     focus_tag_input: bool,
     focus_search: bool,
+    /// the search box is being typed in: its last word is still unfinished (matched as a beginning)
+    search_live: bool,
     modal: Option<Modal>,
+    /// every hashtag (suggestions, renames)
     tag_counts: Vec<(String, usize)>,
+    /// hashtags as the 검색 뷰 list counts them: only pictures the 태그 여부 switches let through
+    tag_list_counts: Vec<(String, usize)>,
+    /// 무소속 in the 검색 뷰 list (with 태그 여부); `unfiled_n` counts all (album view)
+    unfiled_kind_n: usize,
     /// pictures directly in each album (live, not in the trash)
     album_counts: HashMap<u32, usize>,
     /// pictures in each album or any of its sub albums (each picture once) — 검색 뷰 counts
@@ -523,8 +531,11 @@ impl App {
             tag_input: String::new(),
             focus_tag_input: false,
             focus_search: false,
+            search_live: false,
             modal: None,
             tag_counts: Vec::new(),
+            tag_list_counts: Vec::new(),
+            unfiled_kind_n: 0,
             album_counts: HashMap::new(),
             album_tree_counts: HashMap::new(),
             kind_counts: (0, 0),
@@ -728,7 +739,7 @@ impl App {
 
     fn refilter(&mut self, keep_focus: bool) {
         self.sync_album_names();
-        let mut q = Query::parse(&self.query_text);
+        let mut q = Query::parse_with(&self.query_text, self.settings.search_or, self.search_live);
         for t in q.album_trees() {
             let sub = self.db.album_subtree(t);
             q.trees.insert(t, sub);
@@ -740,7 +751,7 @@ impl App {
         // album view (album:<name>, album:top) shows all its pictures
         let (wf, plain) = (self.settings.kind_wf, self.settings.kind_plain);
         // and so does the trash (a place too)
-        let kind_on = !(wf && plain) && !matches!(query::album_word(&self.query_text), Some(Some(_))) && !query::has_word(&self.query_text, "is:trash");
+        let kind_on = !(wf && plain) && self.view != View::Albums && !query::has_word(&self.query_text, "is:trash");
         let mut v: Vec<usize> =
             (0..self.db.images.len()).filter(|&i| q.matches(&self.db.images[i]) && (!kind_on || self.db.images[i].has_workflow() == wf)).collect();
         let im = &self.db.images;
@@ -782,11 +793,22 @@ impl App {
         }
     }
 
+    /// A saved filter or recent search picked: they are kept in AND form (commas = all), so
+    /// a pick with commas between tags turns the switch to AND to keep its meaning.
+    fn pick_kept_search(&mut self, q: String) {
+        if self.settings.search_or && query::wants_and(&q) {
+            self.settings.search_or = false;
+            self.notice(tr("저장된 검색은 AND 기준이라 검색칸 왼쪽을 AND 로 바꿈", "Kept searches are written for AND, so the switch left of the search box is now AND"), false);
+        }
+        self.settings.push_search(&q);
+        self.set_query(q);
+    }
+
     fn set_query(&mut self, q: String) {
         self.query_text = q;
+        self.search_live = false;
         self.refilter(false);
         self.settings.query = self.query_text.clone();
-        self.settings.push_search(&self.query_text.clone());
         if matches!(self.view, View::Viewer | View::Compare) {
             self.view = if self.back_view == View::Albums { View::Albums } else { View::Grid };
         }
@@ -794,14 +816,30 @@ impl App {
 
     fn recount(&mut self) {
         self.tag_counts = self.db.all_tags();
+        let (wf, plain) = (self.settings.kind_wf, self.settings.kind_plain);
+        let kind_ok = |i: &Img| (wf && plain) || i.has_workflow() == wf;
+        {
+            let mut m: HashMap<&str, usize> = HashMap::new();
+            for i in self.db.images.iter().filter(|i| !i.missing && !i.trash && kind_ok(i)) {
+                for t in &i.tags {
+                    *m.entry(t.as_str()).or_default() += 1;
+                }
+            }
+            let mut v: Vec<(String, usize)> = m.into_iter().map(|(k, v)| (k.to_string(), v)).collect();
+            v.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+            self.tag_list_counts = v;
+        }
         self.album_counts.clear();
         self.album_tree_counts.clear();
         self.unfiled_n = 0;
+        self.unfiled_kind_n = 0;
         let parent: HashMap<u32, u32> = self.db.albums.iter().map(|a| (a.id, a.parent)).collect();
         let mut up: HashSet<u32> = HashSet::new();
         for i in self.db.images.iter().filter(|i| !i.missing && !i.trash) {
+            let k = kind_ok(i);
             if i.albums.iter().all(|&a| a == 0) {
                 self.unfiled_n += 1;
+                self.unfiled_kind_n += k as usize;
             }
             up.clear();
             for a in i.albums.iter().filter(|&&a| a != 0) {
@@ -814,14 +852,29 @@ impl App {
                     guard += 1;
                 }
             }
-            for a in &up {
-                *self.album_tree_counts.entry(*a).or_default() += 1;
+            if k {
+                for a in &up {
+                    *self.album_tree_counts.entry(*a).or_default() += 1;
+                }
             }
         }
-        self.ckpt_counts = self.db.counts_by(|i| &i.ckpt);
+        let count_by = |f: &dyn Fn(&Img) -> &str| -> Vec<(String, usize)> {
+            let mut m: HashMap<&str, usize> = HashMap::new();
+            for i in self.db.images.iter().filter(|i| !i.missing && !i.trash && kind_ok(i)) {
+                let v = f(i);
+                if !v.is_empty() {
+                    *m.entry(v).or_default() += 1;
+                }
+            }
+            let mut v: Vec<(String, usize)> = m.into_iter().map(|(k, v)| (k.to_string(), v)).collect();
+            v.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+            v
+        };
+        self.ckpt_counts = count_by(&|i: &Img| i.ckpt.as_str());
+        self.folder_counts = count_by(&|i: &Img| i.folder());
         {
             let mut m: HashMap<String, usize> = HashMap::new();
-            for i in self.db.images.iter().filter(|i| !i.missing && !i.trash) {
+            for i in self.db.images.iter().filter(|i| !i.missing && !i.trash && kind_ok(i)) {
                 for l in &i.loras {
                     if !l.is_empty() {
                         *m.entry(l.clone()).or_default() += 1;
@@ -832,7 +885,6 @@ impl App {
             v.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
             self.lora_counts = v;
         }
-        self.folder_counts = self.db.counts_by(|i| i.folder());
         self.folder_counts.sort();
         self.score_counts = [0; 7];
         self.kind_counts = (0, 0);
@@ -847,7 +899,9 @@ impl App {
                 self.trash_n += 1;
                 continue;
             }
-            self.score_counts[i.score.min(6) as usize] += 1;
+            if kind_ok(i) {
+                self.score_counts[i.score.min(6) as usize] += 1;
+            }
             if i.has_workflow() {
                 self.kind_counts.0 += 1;
             } else {
@@ -933,11 +987,13 @@ impl App {
     }
 
     fn start_import(&mut self, paths: Vec<PathBuf>, mv: bool) {
-        self.start_import_to(paths, mv, None);
+        let to = self.cur_album().filter(|a| a.is_some());
+        self.start_import_to(paths, mv, to);
     }
 
     /// Import; `album` = put the pictures (new ones and ones already in) into that album too.
     fn start_import_to(&mut self, paths: Vec<PathBuf>, mv: bool, album: Option<Option<u32>>) {
+        self.undo_barrier(tr("가져오기", "Import"));
         if self.import_rx.is_some() {
             // e.g. a second drop while the first is still copying: do it right after
             self.import_queue.push((paths, mv, album));
@@ -1132,6 +1188,11 @@ impl App {
             }
             if r.copied > 0 || !r.failed.is_empty() || !watch {
                 let mut msg = trf!("{}가져오기: {}장 넣음, 같은 그림 {}장 건너뜀", "{}Import: {} pictures added, {} duplicates skipped", if watch { tr("자동 ", "Auto ") } else { "" }, r.copied, r.skipped_dup);
+                // a skipped one may be in the imgr Trash: say so, or it looks as if nothing happened
+                let in_trash = r.dup_ids.iter().filter(|id| self.img(id).is_some_and(|i| i.trash)).count();
+                if in_trash > 0 {
+                    msg.push_str(&trf!(" (그중 {in_trash}장은 imgr 휴지통에 있음 — is:trash 에서 되살리기)", " ({in_trash} of them are in the imgr Trash — restore them in is:trash)"));
+                }
                 if r.renamed > 0 {
                     msg.push_str(&trf!(", 이름이 겹쳐 '이름 (2)'처럼 바꾼 것 {}장", ", {} renamed like 'name (2)' because of name clashes", r.renamed));
                 }
@@ -1392,20 +1453,17 @@ impl App {
         }
         let mut seen = HashSet::new();
         self.settings.recent_tags.retain(|t| seen.insert(t.clone()));
-        let (wo, wn) = (format!("#{old}"), format!("#{new}"));
-        let (nwo, nwn) = (format!("-#{old}"), format!("-#{new}"));
+        let wo = format!("#{old}");
         for f in self.db.saved.iter_mut() {
-            f.query = f
-                .query
-                .split(' ')
-                .map(|w| if w == wo { wn.clone() } else if w == nwo { nwn.clone() } else { w.to_string() })
-                .collect::<Vec<_>>()
-                .join(" ");
+            f.query = query::rename_hashtag(&f.query, old, &new);
+        }
+        for h in self.settings.search_history.iter_mut() {
+            *h = query::rename_hashtag(h, old, &new);
         }
         self.notice(trf!("#{old} → #{new} ({}장, Ctrl+Z 되돌리기)", "#{old} → #{new} ({} pictures, Ctrl+Z to undo)", ids.len()), false);
-        if query::has_word(&self.query_text, &wo) {
-            let q = query::toggle_word(&self.query_text, &wo);
-            self.set_query(query::toggle_word(&q, &wn));
+        if query::has_item(&self.query_text, &[wo.as_str()]) || query::has_word(&self.query_text, &format!("-{wo}")) {
+            let q = query::rename_hashtag(&self.query_text, old, &new);
+            self.set_query(q);
         } else {
             self.refilter(true);
         }
@@ -1664,6 +1722,7 @@ impl App {
 
     /// Put albums under another one (0 = the top).
     fn move_albums(&mut self, ids: &[u32], parent: u32) {
+        self.undo_barrier(tr("앨범 옮기기", "Move album"));
         let (mut ok, mut refused) = (0, 0);
         for &id in ids {
             if self.db.album(id).is_some_and(|a| a.parent == parent) {
@@ -1827,9 +1886,14 @@ impl App {
             }
             return;
         };
-        if clip.cut {
+        if clip.cut && clip.from.is_none() {
+            // cut where no album was shown (Search view): it came from no one place, so it is
+            // put in like a copy and keeps its other albums
+            self.add_to_album(&clip.ids, to);
+        } else if clip.cut {
             if clip.from == Some(to) {
                 self.notice(tr("같은 앨범입니다", "Same album"), false);
+                self.album_clip = Some(clip); // still there for the right album
             } else {
                 self.move_to_album(&clip.ids, clip.from, to);
             }
@@ -1857,18 +1921,29 @@ impl App {
     /// album and albums are deleted with their pictures kept.
     fn delete_in_album_view(&mut self, strong: bool) {
         let ids = self.picked_pictures();
-        if !ids.is_empty() {
-            match self.cur_album() {
-                Some(Some(x)) if !strong => self.take_out_here(&ids, x),
-                None if !strong && self.view == View::Albums => self.take_out_here(&ids, 0),
-                // 무소속 (in no album) or Shift+Del: straight to the trash
-                _ => self.set_trash(true),
-            }
-        }
         if !self.album_sel.is_empty() {
+            // albums too: one question for both, nothing happens before OK
             let mut a: Vec<u32> = self.album_sel.iter().copied().collect();
             a.sort_unstable();
-            self.modal = Some(Modal::AlbumDelete { ids: a, with_pics: strong });
+            self.modal = Some(Modal::AlbumDelete { ids: a, with_pics: strong, pics: ids });
+            return;
+        }
+        self.delete_pictures_here(&ids, strong);
+    }
+
+    /// The picture part of Del / Shift+Del in the album view.
+    pub(super) fn delete_pictures_here(&mut self, ids: &[String], strong: bool) {
+        if ids.is_empty() {
+            return;
+        }
+        match self.cur_album() {
+            Some(Some(x)) if !strong => self.take_out_here(ids, x),
+            None if !strong && self.view == View::Albums => self.take_out_here(ids, 0),
+            // 무소속 (in no album) or Shift+Del: straight to the trash
+            _ => {
+                self.sel = ids.iter().cloned().collect();
+                self.set_trash(true);
+            }
         }
     }
 
@@ -1885,14 +1960,11 @@ impl App {
             tree.extend(self.db.album_subtree(id));
         }
         let pics: Vec<String> = self.db.images.iter().filter(|i| !i.missing && !i.trash && i.albums.iter().any(|a| tree.contains(a))).map(|i| i.id.clone()).collect();
-        let t = tree.clone();
-        self.edit(&pics, tr("앨범과 함께 휴지통으로", "To Trash with the album"), move |im| {
-            im.trash = true;
-            im.albums.retain(|a| !t.contains(a));
-        });
+        // albums first (not undoable), then the pictures, so Ctrl+Z right after brings them back
         for &id in &tree {
             self.delete_album(id);
         }
+        self.edit(&pics, tr("앨범과 함께 휴지통으로", "To Trash with the album"), |im| im.trash = true);
         self.album_sel.clear();
         self.sel.clear();
         self.refilter(true);
@@ -1931,6 +2003,7 @@ impl App {
     }
 
     fn delete_album(&mut self, id: u32) {
+        self.undo_barrier(tr("앨범 지우기", "Delete album"));
         let name = self.album_label(Some(id));
         let shown = self.cur_album() == Some(Some(id));
         let parent = self.db.album(id).map(|a| a.parent).unwrap_or(0);
@@ -2008,11 +2081,27 @@ impl App {
         }
     }
 
+    /// Album moves / deletes / renames, filter deletes and imports are not undone by Ctrl+Z:
+    /// a mark on the undo list says so, instead of Ctrl+Z quietly undoing an older edit.
+    pub(super) fn undo_barrier(&mut self, label: &str) {
+        if self.undo.last().is_some_and(|s| s.items.is_empty() && s.label == label) {
+            return;
+        }
+        self.undo.push(UndoStep { label: label.to_string(), items: Vec::new() });
+        if self.undo.len() > 200 {
+            self.undo.remove(0);
+        }
+    }
+
     fn do_undo(&mut self) {
         let Some(step) = self.undo.pop() else {
             self.notice(tr("되돌릴 것이 없습니다", "Nothing to undo"), false);
             return;
         };
+        if step.items.is_empty() {
+            self.notice(trf!("'{}'은(는) Ctrl+Z로 되돌릴 수 없습니다 (그 앞의 것은 Ctrl+Z 한 번 더)", "'{}' cannot be undone with Ctrl+Z (press Ctrl+Z again for the step before it)", step.label), true);
+            return;
+        }
         for it in step.items {
             if let Some(&i) = self.id_index.get(&it.id) {
                 let im = &mut self.db.images[i];
@@ -2572,6 +2661,8 @@ impl App {
 }
 
 const HELP: &str = "조건은 콤마로 나눔 = 모두 맞는 것 (AND).  앞에 - = 빼기.  a|b = 둘 중 하나 (OR).
+검색칸 왼쪽을 OR 로 두면 콤마로 나눈 태그·해시태그는 하나라도 맞으면 됨 (점수·앨범 같은 필터와 - 조건은 그래도 좁힘).
+치는 동안 마지막 말은 그 글자로 시작하는 태그까지 보여 줌 (so → solo). Enter·다른 곳 누르기 = 확정 (정확히 그 태그).
 long hair, scar   프롬프트 태그를 통째로 (띄어쓰기 = _, 대소문자·가중치 (tag:1.2) 무시, 문장 프롬프트는 마침표에서도 나눔)
 __scar__  __scar  scar__   scar가 들어간 / scar로 끝나는 / scar로 시작하는 태그
 
@@ -2593,7 +2684,7 @@ sort:new  old  name  score  seed  size  random
 그 밖의 글자        프롬프트 태그 (해시태그·프리셋 이름도). 파일 이름은 name:, 체크포인트는 ckpt:
 #a, album:x 처럼 기호 붙은 낱말은 띄어쓰기로도 나뉨
 
-왼쪽 목록을 누르면 검색에 넣고 빼 줍니다: 검색칸 왼쪽 AND = 새 조건, OR = 마지막 조건에 | 로.
+왼쪽 목록을 누르면 검색에 넣고 빼 줍니다: 검색칸 왼쪽 AND = 새 조건, OR = 마지막 조건에 | 로 (하나라도).
 Ctrl+클릭 = 그 종류는 이것만.  오른쪽 클릭 = 메뉴.
 
 키
@@ -2617,6 +2708,8 @@ Ctrl+클릭 = 그 종류는 이것만.  오른쪽 클릭 = 메뉴.
   왼쪽 태그 여부: 워크플로(ComfyUI 정보 있는 그림) / 태그없음 — 둘 다 켜면 모두 (앨범 뷰·휴지통에는 적용 안 됨)";
 
 const HELP_EN: &str = "Conditions are separated by commas = all must match (AND).  A leading - = exclude.  a|b = either one (OR).
+With OR left of the search box, comma-separated tags and hashtags match if any one does (filters like score or album and - conditions still narrow).
+While typing, the last word also shows tags starting with it (so → solo). Enter or clicking elsewhere = done (exactly that tag).
 long hair, scar   whole prompt tags (space = _, case and weights (tag:1.2) ignored; sentence prompts also split at full stops)
 __scar__  __scar  scar__   tags containing / ending with / starting with scar
 

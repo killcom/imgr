@@ -114,7 +114,8 @@ impl App {
                     });
                 });
                 if go && !name.trim().is_empty() {
-                    let q = self.query_text.trim().to_string();
+                    // kept with its OR spelled out, so it means the same in AND mode
+                    let q = query::explicit(&self.query_text, self.settings.search_or);
                     if let Some(f) = self.db.saved.iter_mut().find(|f| f.name == name.trim()) {
                         f.query = q;
                     } else {
@@ -401,6 +402,7 @@ impl App {
                 });
                 if go && !new.trim().is_empty() {
                     if let Some(n) = self.db.rename_album(id, &new) {
+                        self.undo_barrier(tr("앨범 이름 바꾸기", "Rename album"));
                         self.dirty = true;
                         self.notice(trf!("앨범 이름: {n}", "Album name: {n}"), false);
                     }
@@ -453,7 +455,7 @@ impl App {
                 }
                 Modal::AlbumNew { parent, new, put }
             }
-            Modal::AlbumDelete { mut ids, with_pics } => {
+            Modal::AlbumDelete { mut ids, with_pics, pics } => {
                 let mut go = false;
                 ids.retain(|&id| self.db.album(id).is_some());
                 if ids.is_empty() {
@@ -477,6 +479,10 @@ impl App {
                             ui.label(egui::RichText::new(trf!("… 외 {}개", "… and {} more", names.len() - 8)).color(DIM));
                         }
                     }
+                    if !pics.is_empty() {
+                        let what = if with_pics { tr("imgr 휴지통으로", "go to the imgr Trash") } else { tr("이 앨범에서 빠짐", "leave this album") };
+                        ui.label(trf!("같이 고른 그림 {}장도 {what}.", "The {} pictures selected with them also {what}.", pics.len()));
+                    }
                     if with_pics {
                         let subs = tree.len() - ids.len();
                         ui.label(egui::RichText::new(trf!("앨범{0}과 그 안의 그림 {n_all}장을 지웁니다. 그림은 imgr 휴지통으로 가서 다른 앨범에서도 안 보입니다.", "Deletes the album{0} and the {n_all} pictures in it. The pictures go to the imgr Trash and disappear from other albums too.", if subs > 0 { trf!(" (하위 앨범 {subs}개 포함)", "s (with {subs} sub-albums)") } else { String::new() })).color(ERR));
@@ -496,6 +502,9 @@ impl App {
                         }
                     });
                 });
+                if go && !pics.is_empty() {
+                    self.delete_pictures_here(&pics, with_pics);
+                }
                 if go && with_pics {
                     let (na, np) = self.delete_albums_with_pictures(&ids);
                     self.notice(trf!("앨범 {na}개 지움, 그림 {np}장 imgr 휴지통으로 (그림은 Ctrl+Z 되돌리기)", "Deleted {na} albums, {np} pictures to the imgr Trash (Ctrl+Z restores the pictures)"), false);
@@ -509,7 +518,7 @@ impl App {
                     }
                     keep = false;
                 }
-                Modal::AlbumDelete { ids, with_pics }
+                Modal::AlbumDelete { ids, with_pics, pics }
             }
             Modal::TagDelete { tag, n } => {
                 egui::Modal::new(egui::Id::new("tagdel")).show(ctx, |ui| {

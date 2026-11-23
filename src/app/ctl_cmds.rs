@@ -381,7 +381,7 @@ impl App {
                 }
                 "save_filter" => {
                     let name = s("name").unwrap_or_default();
-                    let q = s("q").unwrap_or_else(|| self.query_text.clone());
+                    let q = query::explicit(&s("q").unwrap_or_else(|| self.query_text.clone()), self.settings.search_or);
                     if name.is_empty() {
                         Some(json!({"ok": false, "error": "name missing"}))
                     } else {
