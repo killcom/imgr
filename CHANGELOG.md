@@ -1,5 +1,9 @@
 # 바뀐 것 / Changes
 
+## v0.15
+- PNG 정보를 연결선 따라 읽음: UNETLoader(Anima·Flux·GGUF) 모델도 체크포인트로, 문자열 노드로 만든 프롬프트도 — reads ComfyUI info by following wires: UNETLoader / GGUF models count as checkpoints, prompts built by string nodes are found
+- 예전에 정보가 비어 있던 그림은 한 번 다시 읽음 — pictures that came out empty before are read again once
+
 ## v0.14
 - Visual C++ 재배포 패키지(VCRUNTIME140.dll) 없이도 켜짐 — runs without the Visual C++ Redistributable (C runtime built in)
 - 자동 빌드 도구 새 판으로 (Node 24) — release workflow actions updated (Node 24)

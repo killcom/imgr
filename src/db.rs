@@ -112,6 +112,8 @@ pub struct Db {
     pub saved: Vec<SavedFilter>,
     /// Library notes by entry key ("char/ch001_alice", "preset/animeA", ...).
     pub lib: HashMap<String, LibMeta>,
+    /// How PNG info was read (META_VER). Older: pictures without checkpoint or prompt are read again once.
+    pub meta_ver: u32,
     /// fields written by a newer imgr: kept as they are when an older exe saves
     #[serde(flatten)]
     pub extra: serde_json::Map<String, serde_json::Value>,
@@ -122,6 +124,8 @@ pub struct Db {
 
 /// Version of the id hash (2 = the fixed FNV/CRC hash below).
 pub const DB_VERSION: u32 = 2;
+/// Version of the PNG info reader (2 = follows wires: UNETLoader models, prompts from string nodes; v0.15).
+pub const META_VER: u32 = 2;
 
 pub fn root_dir() -> PathBuf {
     static ROOT: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
@@ -178,10 +182,10 @@ impl Db {
         };
         if let Err(e) = std::fs::metadata(&p) {
             if e.kind() == std::io::ErrorKind::NotFound && !d.join("db.json.bak").exists() {
-                return (Db { version: DB_VERSION, ..Default::default() }, None);
+                return (Db { version: DB_VERSION, meta_ver: META_VER, ..Default::default() }, None);
             }
         }
-        match parse(&p) {
+        let (mut db, note) = match parse(&p) {
             Ok(db) => (db, None),
             Err(e1) => {
                 let stamp = chrono::Local::now().format("%Y%m%d_%H%M%S");
@@ -194,7 +198,28 @@ impl Db {
                     }
                 }
             }
+        };
+        if !db.read_only {
+            db.reread_old_meta();
         }
+        (db, note)
+    }
+
+    /// A newer PNG info reader: pictures that came out without checkpoint or prompt are read
+    /// again at the next folder scan (scores, tags and albums stay; only the info changes).
+    pub fn reread_old_meta(&mut self) -> usize {
+        if self.meta_ver >= META_VER {
+            return 0;
+        }
+        let mut n = 0;
+        for i in self.images.iter_mut() {
+            if i.meta_read && (i.ckpt.is_empty() || i.prompt.is_empty()) {
+                i.meta_read = false;
+                n += 1;
+            }
+        }
+        self.meta_ver = META_VER;
+        n
     }
 
     /// Serialize for saving (UI thread); `write_bytes` does the disk part (any thread).
@@ -745,6 +770,11 @@ pub fn read_meta(p: &Path) -> Meta {
 fn parse_comfy(js: &str, m: &mut Meta) {
     let Ok(v) = serde_json::from_str::<serde_json::Value>(js) else { return };
     let Some(obj) = v.as_object() else { return };
+    // 1) follow the wires back from the sampler: works the same for every model base
+    //    (SDXL CheckpointLoaderSimple, Anima / Flux UNETLoader, GGUF ...) and for prompts
+    //    built by string nodes (PrimitiveString -> StringReplace -> CLIPTextEncode)
+    graph_meta(obj, m);
+    // 2) by node kind, for what is still empty (graphs without wires, unknown samplers)
     // main nodes first ("ckpt", "pos", "sample" are the names run.py gives)
     let mut keys: Vec<&String> = obj.keys().collect();
     keys.sort_by_key(|k| match k.as_str() {
@@ -783,6 +813,162 @@ fn parse_comfy(js: &str, m: &mut Meta) {
             _ => {}
         }
     }
+}
+
+type Graph = serde_json::Map<String, serde_json::Value>;
+
+/// A wire in the ComfyUI API prompt: ["node id", output slot].
+fn wire(v: &serde_json::Value) -> Option<String> {
+    let a = v.as_array()?;
+    if a.len() != 2 || !a[1].is_number() {
+        return None;
+    }
+    match &a[0] {
+        serde_json::Value::String(s) => Some(s.clone()),
+        serde_json::Value::Number(n) => Some(n.to_string()),
+        _ => None,
+    }
+}
+
+fn node_inputs<'a>(g: &'a Graph, id: &str) -> Option<&'a serde_json::Map<String, serde_json::Value>> {
+    g.get(id)?.get("inputs")?.as_object()
+}
+
+fn node_class<'a>(g: &'a Graph, id: &str) -> &'a str {
+    g.get(id).and_then(|n| n.get("class_type")).and_then(|c| c.as_str()).unwrap_or("")
+}
+
+/// Sampler, checkpoint, positive prompt and seed by following wires.
+fn graph_meta(g: &Graph, m: &mut Meta) {
+    // the sampler: a node that takes a model / guider / positive (KSampler, SamplerCustom(Advanced) ...)
+    let mut ids: Vec<&String> = g.keys().collect();
+    ids.sort_by_key(|k| (k.as_str() != "sample", k.parse::<u64>().unwrap_or(u64::MAX), k.to_string()));
+    let Some(sid) = ids.into_iter().find(|id| {
+        let c = node_class(g, id);
+        let i = node_inputs(g, id);
+        c.contains("Sampler") && i.is_some_and(|i| i.contains_key("model") || i.contains_key("guider") || i.contains_key("positive"))
+    }) else {
+        return;
+    };
+    let si = node_inputs(g, sid).cloned().unwrap_or_default();
+    // a guider (SamplerCustomAdvanced) holds model and conditioning itself
+    let guider = si.get("guider").and_then(wire).and_then(|gid| node_inputs(g, &gid).cloned());
+    let pick = |keys: &[&str]| -> Option<serde_json::Value> {
+        for k in keys {
+            if let Some(v) = si.get(*k).or_else(|| guider.as_ref().and_then(|gi| gi.get(*k))) {
+                return Some(v.clone());
+            }
+        }
+        None
+    };
+    if m.ckpt.is_empty() {
+        if let Some(name) = pick(&["model"]).and_then(|v| find_model(g, &v)) {
+            m.ckpt = short_model(&name);
+        }
+    }
+    if m.prompt.is_empty() {
+        if let Some(t) = pick(&["positive", "conditioning", "cond1"]).and_then(|v| find_text(g, &v)) {
+            m.prompt = t;
+        }
+    }
+    if m.seed.is_none() {
+        m.seed = pick(&["seed", "noise_seed"]).and_then(|v| resolve_num(g, &v, 0)).or_else(|| {
+            // SamplerCustomAdvanced: noise <- RandomNoise(noise_seed)
+            let nid = pick(&["noise"]).as_ref().and_then(wire)?;
+            let ni = node_inputs(g, &nid)?;
+            ["noise_seed", "seed"].iter().find_map(|k| ni.get(*k).and_then(|v| resolve_num(g, v, 0)))
+        });
+    }
+}
+
+/// Walk the model wire up to the node that loads it (LoRA nodes pass the model on).
+fn find_model(g: &Graph, start: &serde_json::Value) -> Option<String> {
+    const NAME_KEYS: [&str; 5] = ["ckpt_name", "unet_name", "model_name", "model_path", "base_ckpt_name"];
+    let mut cur = wire(start)?;
+    for _ in 0..40 {
+        let inp = node_inputs(g, &cur)?;
+        if !node_class(g, &cur).to_lowercase().contains("lora") {
+            if let Some(n) = NAME_KEYS.iter().find_map(|k| inp.get(*k).and_then(|v| v.as_str())) {
+                return Some(n.to_string());
+            }
+        }
+        // go on along the model wire (or anything that looks like one)
+        let next = inp.get("model").and_then(wire).or_else(|| {
+            inp.iter().filter(|(k, _)| k.contains("model")).find_map(|(_, v)| wire(v))
+        })?;
+        cur = next;
+    }
+    None
+}
+
+/// Walk the conditioning wire up to the node that holds the prompt text.
+fn find_text(g: &Graph, start: &serde_json::Value) -> Option<String> {
+    const TEXT_KEYS: [&str; 8] = ["text", "text_g", "prompt", "t5xxl", "clip_l", "text_l", "string", "value"];
+    const COND_KEYS: [&str; 6] = ["conditioning", "conditioning_1", "conditioning_to", "positive", "cond1", "conditioning_from"];
+    const NOT_TEXT: [&str; 12] = ["clip", "model", "vae", "control_net", "image", "mask", "pixels", "latent", "samples", "style_model", "clip_vision_output", "negative"];
+    let mut queue = std::collections::VecDeque::from([wire(start)?]);
+    let mut seen = std::collections::HashSet::new();
+    while let Some(id) = queue.pop_front() {
+        if !seen.insert(id.clone()) || seen.len() > 60 {
+            continue;
+        }
+        let Some(inp) = node_inputs(g, &id) else { continue };
+        if let Some(t) = TEXT_KEYS.iter().find_map(|k| inp.get(*k).and_then(|v| resolve_text(g, v, 0))) {
+            if !t.trim().is_empty() {
+                return Some(t);
+            }
+        }
+        for k in COND_KEYS {
+            if let Some(w) = inp.get(k).and_then(wire) {
+                queue.push_back(w);
+            }
+        }
+        for (k, v) in inp {
+            if !COND_KEYS.contains(&k.as_str()) && !NOT_TEXT.contains(&k.as_str()) {
+                if let Some(w) = wire(v) {
+                    queue.push_back(w);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// A text input: written in place, or wired from string nodes (PrimitiveString,
+/// StringReplace, StringConcatenate, wildcard nodes ...).
+fn resolve_text(g: &Graph, v: &serde_json::Value, depth: u32) -> Option<String> {
+    if let Some(s) = v.as_str() {
+        return Some(s.to_string());
+    }
+    if depth > 20 {
+        return None;
+    }
+    let id = wire(v)?;
+    let inp = node_inputs(g, &id)?;
+    let get = |k: &str| inp.get(k).and_then(|x| resolve_text(g, x, depth + 1));
+    // replace: string / text with find -> replace
+    if let (Some(base), Some(find)) = (get("string").or_else(|| get("text")), get("find")) {
+        let rep = get("replace").or_else(|| get("replacement")).unwrap_or_default();
+        return Some(if find.is_empty() { base } else { base.replace(&find, &rep) });
+    }
+    // join: string_a + delimiter + string_b
+    if let (Some(a), Some(b)) = (get("string_a"), get("string_b")) {
+        return Some(format!("{a}{}{b}", get("delimiter").unwrap_or_default()));
+    }
+    ["populated_text", "value", "string", "text", "prompt", "String", "wildcard_text"].iter().find_map(|k| get(k))
+}
+
+/// A number input: in place or wired (PrimitiveInt, seed nodes ...).
+fn resolve_num(g: &Graph, v: &serde_json::Value, depth: u32) -> Option<u64> {
+    if let Some(n) = v.as_u64() {
+        return Some(n);
+    }
+    if depth > 10 {
+        return None;
+    }
+    let id = wire(v)?;
+    let inp = node_inputs(g, &id)?;
+    ["seed", "noise_seed", "value", "int", "number"].iter().find_map(|k| inp.get(*k).and_then(|x| resolve_num(g, x, depth + 1)))
 }
 
 pub struct ScanItem {
@@ -1160,6 +1346,56 @@ mod tests {
         assert_eq!(m.loras, vec!["style_pastel1".to_string()]);
         assert_eq!(m.prompt, "1girl, solo");
         assert_eq!(m.seed, Some(123));
+    }
+    #[test]
+    fn comfy_wired_anima() {
+        // Anima: UNETLoader -> LoraLoaderModelOnly -> KSampler, prompt built by string nodes
+        let js = r#"{"unet":{"class_type":"UNETLoader","inputs":{"unet_name":"One obsession_animaV5turbo.safetensors"}},
+          "lora":{"class_type":"LoraLoaderModelOnly","inputs":{"lora_name":"anima_onePns2.safetensors","model":["unet",0]}},
+          "naia_p":{"class_type":"PrimitiveString","inputs":{"value":"1girl, solo"}},
+          "naia_n":{"class_type":"PrimitiveString","inputs":{"value":"worst quality"}},
+          "naia_rep1":{"class_type":"StringReplace","inputs":{"string":"anima_onePns, masterpiece, __NAIAPOS__","find":"__NAIAPOS__","replace":["naia_p",0]}},
+          "pos":{"class_type":"CLIPTextEncode","inputs":{"text":["naia_rep1",0],"clip":["clip",0]}},
+          "neg":{"class_type":"CLIPTextEncode","inputs":{"text":["naia_n",0],"clip":["clip",0]}},
+          "seedn":{"class_type":"PrimitiveInt","inputs":{"value":85731387922058}},
+          "sample":{"class_type":"KSampler","inputs":{"model":["lora",0],"positive":["pos",0],"negative":["neg",0],"seed":["seedn",0]}}}"#;
+        let mut m = Meta::default();
+        parse_comfy(js, &mut m);
+        assert_eq!(m.ckpt, "One obsession_animaV5turbo");
+        assert_eq!(m.loras, vec!["anima_onePns2".to_string()]);
+        assert_eq!(m.prompt, "anima_onePns, masterpiece, 1girl, solo");
+        assert_eq!(m.seed, Some(85731387922058));
+    }
+    #[test]
+    fn comfy_wired_flux_custom_sampler() {
+        // Flux style: GGUF loader, CFGGuider, RandomNoise, Flux text encoder, numbered node ids
+        let js = r#"{"10":{"class_type":"UnetLoaderGGUF","inputs":{"unet_name":"flux1-dev-Q8_0.gguf"}},
+          "11":{"class_type":"LoraLoader","inputs":{"lora_name":"style_x.safetensors","model":["10",0],"clip":["12",0]}},
+          "6":{"class_type":"CLIPTextEncodeFlux","inputs":{"clip_l":"a cat","t5xxl":"a cat on a sofa","guidance":3.5,"clip":["11",1]}},
+          "22":{"class_type":"CFGGuider","inputs":{"model":["11",0],"positive":["6",0],"negative":["7",0],"cfg":1}},
+          "25":{"class_type":"RandomNoise","inputs":{"noise_seed":42}},
+          "16":{"class_type":"KSamplerSelect","inputs":{"sampler_name":"euler"}},
+          "13":{"class_type":"SamplerCustomAdvanced","inputs":{"noise":["25",0],"guider":["22",0],"sampler":["16",0]}}}"#;
+        let mut m = Meta::default();
+        parse_comfy(js, &mut m);
+        assert_eq!(m.ckpt, "flux1-dev-Q8_0");
+        assert_eq!(m.loras, vec!["style_x".to_string()]);
+        assert_eq!(m.prompt, "a cat on a sofa");
+        assert_eq!(m.seed, Some(42));
+    }
+    #[test]
+    fn reread_once() {
+        let mut db = Db::default();
+        let it = |p: &str, id: &str| ScanItem { path: p.into(), id: id.into(), size: 1, mtime: 1, meta: None };
+        db.merge_scan(vec![it("00001/a.png", "h1"), it("00001/b.png", "h2")], 0, true);
+        for i in db.images.iter_mut() {
+            i.meta_read = true;
+        }
+        db.images[0].ckpt = "x".into();
+        db.images[0].prompt = "p".into();
+        assert_eq!(db.reread_old_meta(), 1); // only the empty one
+        assert!(db.images[0].meta_read && !db.images[1].meta_read);
+        assert_eq!(db.reread_old_meta(), 0); // once
     }
     #[test]
     fn merge_keeps_tags_on_move() {
