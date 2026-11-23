@@ -331,7 +331,6 @@ pub struct App {
     /// imgr.db writer thread (changed rows, written in order; optional ack for exit)
     save_tx: Sender<(crate::store::Delta, Option<Sender<()>>)>,
     save_err: Arc<std::sync::Mutex<Option<String>>>,
-    last_title: String,
     /// ids re-hash needed (db from an older id version)
     rehash: bool,
 }
@@ -574,7 +573,6 @@ impl App {
             scan_gen: 0,
             save_tx,
             save_err,
-            last_title: String::new(),
             rehash,
             settings,
         };
@@ -2776,12 +2774,6 @@ impl eframe::App for App {
         } else {
             // periodic jobs need a frame now and then even when nothing happens
             ctx.request_repaint_after(Duration::from_secs(5));
-        }
-        let live = self.db.images.len().saturating_sub(self.missing_n + self.trash_n);
-        let title = trf!("imgr {3} — {0}장 중 {1}장{2}", "imgr {3} — {1} of {0} pictures{2}", live, self.shown.len(), if self.query_text.trim().is_empty() { String::new() } else { format!("  ·  {}", self.query_text.trim()) }, crate::version_short());
-        if title != self.last_title {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
-            self.last_title = title;
         }
     }
 

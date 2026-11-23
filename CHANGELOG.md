@@ -1,5 +1,8 @@
 # 바뀐 것 / Changes
 
+## v0.24
+- 창 제목은 판 번호만 (imgr v0.24) — the window title is just the name and version
+
 ## v0.23
 - 창 제목에 판 번호 (imgr v0.23 — …) — the window title shows the version
 

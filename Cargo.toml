@@ -1,6 +1,6 @@
 [package]
 name = "imgr"
-version = "0.23.0"
+version = "0.24.0"
 edition = "2024"
 description = "Windows image manager for AI-generated pictures: scores, hashtags, albums, ComfyUI prompt info"
 license = "GPL-3.0-or-later"
