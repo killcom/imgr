@@ -1,5 +1,8 @@
 # 바뀐 것 / Changes
 
+## v0.23
+- 창 제목에 판 번호 (imgr v0.23 — …) — the window title shows the version
+
 ## v0.22
 - 해시태그 옆 숫자에서 휴지통 그림을 뺌 (누르면 보이는 수와 같게) — hashtag counts no longer include pictures in the trash (same as what a click shows)
 

@@ -12,6 +12,12 @@ mod store;
 mod thumbs;
 mod winshell;
 
+/// "v0.23" from the Cargo version 0.23.0 (shown in the window title).
+pub fn version_short() -> String {
+    let v: Vec<&str> = env!("CARGO_PKG_VERSION").split('.').collect();
+    format!("v{}.{}", v[0], v.get(1).unwrap_or(&"0"))
+}
+
 fn main() -> eframe::Result<()> {
     std::panic::set_hook(Box::new(|info| {
         let dir = db::data_dir();
@@ -29,7 +35,7 @@ fn main() -> eframe::Result<()> {
     }
     let s = settings::Settings::load();
     let mut viewport = eframe::egui::ViewportBuilder::default()
-        .with_title("imgr")
+        .with_title(format!("imgr {}", version_short()))
         .with_inner_size([s.win_w.max(640.0), s.win_h.max(420.0)])
         .with_min_inner_size([640.0, 420.0]);
     if let (Some(x), Some(y), false) = (s.win_x, s.win_y, offscreen) {
