@@ -1,5 +1,9 @@
 # 바뀐 것 / Changes
 
+## v0.14
+- Visual C++ 재배포 패키지(VCRUNTIME140.dll) 없이도 켜짐 — runs without the Visual C++ Redistributable (C runtime built in)
+- 자동 빌드 도구 새 판으로 (Node 24) — release workflow actions updated (Node 24)
+
 ## v0.13
 - 화면 언어 한국어 / English (⚙ 설정, 처음 켤 때는 윈도우 언어) — screen language Korean / English (⚙ Settings; first start follows Windows)
 - 영문 README.md · docs/usage.md, 한글은 README_ko.md · docs/usage_ko.md
