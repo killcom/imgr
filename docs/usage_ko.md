@@ -133,6 +133,7 @@ date:2026-11-15  date<2026-01-01  = 파일 날짜
 sort:new / old / name / score / seed / size / random   (검색에 sort: 가 있으면 정렬칸에 "(검색)" 표시)
 조건은 콤마로 나눔:  long hair, scar, #pixiv  = 모두 맞는 것.  a|b = 둘 중 하나.
 그 밖의 글자는 프롬프트 태그를 통째로 찾음 (띄어쓰기 = _, 대소문자·가중치 무시. 해시태그·프리셋 이름도).
+프롬프트는 콤마·줄바꿈과 문장 끝 마침표에서 나눔: "solo. A girl. jojo pose" → solo / a girl / jojo pose.
 __scar__ / __scar / scar__ = scar가 들어간 / scar로 끝나는 / scar로 시작하는 태그.  파일 이름은 name:, 체크포인트는 ckpt:
 왼쪽 목록을 누르면 검색에 넣고 빼 줌: 검색칸 왼쪽 AND = 새 조건, OR = 마지막 조건에 | 로 (하나라도).
 Ctrl+클릭 = 그 종류는 이것만. 오른쪽 클릭 = '이것 빼고' (점수는 '이상').

@@ -133,6 +133,7 @@ date:2026-11-15  date<2026-01-01  = file date
 sort:new / old / name / score / seed / size / random   (if the search has sort:, the sort box shows "(search)")
 Conditions are separated by commas: long hair, scar, #pixiv = all must match. a|b = either one.
 Any other text finds a whole prompt tag (space = _, case and weights ignored; hashtags and preset names too).
+A prompt is split at commas, line breaks and full stops ending a sentence: "solo. A girl. jojo pose" → solo / a girl / jojo pose.
 __scar__ / __scar / scar__ = tags containing / ending with / starting with scar. File names: name:, checkpoints: ckpt:
 Clicking an item in the left list adds it to or removes it from the search: AND (left of the search box) = a new condition, OR = joined to the last one with | (either).
 Ctrl+click = only this of its kind. Right-click = 'without this' (for score, 'or higher').

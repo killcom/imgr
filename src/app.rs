@@ -2572,7 +2572,7 @@ impl App {
 }
 
 const HELP: &str = "조건은 콤마로 나눔 = 모두 맞는 것 (AND).  앞에 - = 빼기.  a|b = 둘 중 하나 (OR).
-long hair, scar   프롬프트 태그를 통째로 (띄어쓰기 = _, 대소문자·가중치 (tag:1.2) 무시)
+long hair, scar   프롬프트 태그를 통째로 (띄어쓰기 = _, 대소문자·가중치 (tag:1.2) 무시, 문장 프롬프트는 마침표에서도 나눔)
 __scar__  __scar  scar__   scar가 들어간 / scar로 끝나는 / scar로 시작하는 태그
 
 #pixiv            해시태그가 있는 것        -#pixiv   없는 것
@@ -2617,7 +2617,7 @@ Ctrl+클릭 = 그 종류는 이것만.  오른쪽 클릭 = 메뉴.
   왼쪽 태그 여부: 워크플로(ComfyUI 정보 있는 그림) / 태그없음 — 둘 다 켜면 모두 (앨범 뷰·휴지통에는 적용 안 됨)";
 
 const HELP_EN: &str = "Conditions are separated by commas = all must match (AND).  A leading - = exclude.  a|b = either one (OR).
-long hair, scar   whole prompt tags (space = _, case and weights (tag:1.2) ignored)
+long hair, scar   whole prompt tags (space = _, case and weights (tag:1.2) ignored; sentence prompts also split at full stops)
 __scar__  __scar  scar__   tags containing / ending with / starting with scar
 
 #pixiv            pictures with the hashtag        -#pixiv   without it

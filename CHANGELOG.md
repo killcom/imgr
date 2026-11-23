@@ -1,5 +1,8 @@
 # 바뀐 것 / Changes
 
+## v0.28
+- 문장으로 된 프롬프트(Anima 등)도 문장 끝 마침표에서 태그를 나눔: "solo. A girl. jojo pose"에서 solo·jojo pose가 검색됨 — sentence prompts (Anima etc.) are also split into tags at full stops ending a sentence, so solo and jojo pose in "solo. A girl. jojo pose" are found
+
 ## v0.27
 - 맨 위(/)에 있던 그림을 앨범에 복사해 넣으면 맨 위에도 그대로 남음 (그 앨범에서 Del = 앨범에서만 빠지고 맨 위에 남음). 옮기기(Ctrl+X, 그냥 끌어 놓기)는 맨 위에서 빠짐 — Copying a picture from the top (/) into an album keeps it at the top too (Del in that album only takes it out of the album). Moving (Ctrl+X, plain drag) takes it off the top
 

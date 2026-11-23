@@ -66,6 +66,29 @@ fn norm_tag_into(out: &mut String, raw: &str) {
     }
 }
 
+/// The tags of a prompt: split at commas and line breaks, and at a full stop that ends a
+/// sentence (followed by a space or the end), so "solo. A girl. jojo pose" gives "solo",
+/// "A girl", "jojo pose". A full stop inside a number (":1.2") is kept.
+pub fn prompt_parts(p: &str) -> impl Iterator<Item = &str> {
+    let b = p.as_bytes();
+    let mut start = 0;
+    let mut i = 0;
+    std::iter::from_fn(move || {
+        while i <= b.len() {
+            let end = i == b.len()
+                || matches!(b[i], b',' | b'\n')
+                || (b[i] == b'.' && (i + 1 == b.len() || b[i + 1].is_ascii_whitespace()));
+            i += 1;
+            if end {
+                let part = &p[start..i - 1];
+                start = i;
+                return Some(part);
+            }
+        }
+        None
+    })
+}
+
 pub fn norm_tag(raw: &str) -> String {
     let mut s = String::new();
     norm_tag_into(&mut s, raw);
@@ -526,7 +549,7 @@ fn atom(a: &Atom, i: &Img, q: &Query) -> bool {
                 norm_tag_into(&mut buf, raw);
                 tag_hit(&buf, pat, *any_before, *any_after)
             };
-            i.prompt.split([',', '\n']).any(&mut hit) || i.tags.iter().any(|t| hit(t)) || hit(&i.preset)
+            prompt_parts(&i.prompt).any(&mut hit) || i.tags.iter().any(|t| hit(t)) || hit(&i.preset)
         }
     }
 }
@@ -859,6 +882,18 @@ mod tests {
         assert!(m("pixiv") && m("animea"), "hashtags and the preset by name");
         assert!(!m("__") && !m("____"));
         assert!(m("-white hair") && !m("-1girl"));
+    }
+
+    #[test]
+    fn sentence_prompt_tags() {
+        let parts: Vec<String> = prompt_parts("1girl, solo. A girl. The girl has blue eyes.\njojo pose, (arm up:1.2), flexing.").map(norm_tag).filter(|t| !t.is_empty()).collect();
+        assert_eq!(parts, ["1girl", "solo", "a girl", "the girl has blue eyes", "jojo pose", "arm up", "flexing"]);
+        let mut i = img();
+        i.prompt = "anima, 1girl, solo. A girl. The girl has multicolored hair.\n jojo pose, martial arts, flexing.".into();
+        for q in ["1girl, solo", "jojo pose", "flexing", "solo, jojo_pose"] {
+            assert!(Query::parse(q).matches(&i), "{q}");
+        }
+        assert!(!Query::parse("girl").matches(&i));
     }
 
     #[test]
