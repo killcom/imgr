@@ -131,8 +131,11 @@ album:trip  album:trip+  album:none = pictures directly in the album "trip" / pi
 added:today  added:yesterday  added:3d (last 3 days)  added>=11-01  = date added (today/yesterday also work)
 date:2026-11-15  date<2026-01-01  = file date
 sort:new / old / name / score / seed / size / random   (if the search has sort:, the sort box shows "(search)")
-Any other text is searched in the prompt, name, tags, preset and checkpoint. a|b = either one.
-Clicking an item in the left list adds it to or removes it from the search. Right-click = 'without this' (for score, 'or higher').
+Conditions are separated by commas: long hair, scar, #pixiv = all must match. a|b = either one.
+Any other text finds a whole prompt tag (space = _, case and weights ignored; hashtags and preset names too).
+__scar__ / __scar / scar__ = tags containing / ending with / starting with scar. File names: name:, checkpoints: ckpt:
+Clicking an item in the left list adds it to or removes it from the search: AND (left of the search box) = a new condition, OR = joined to the last one with | (either).
+Ctrl+click = only this of its kind. Right-click = 'without this' (for score, 'or higher').
 For frequent searches use "＋ Save current search as filter" on the left. Right-click a saved search = rename · overwrite with current search · reorder · delete.
 ▾ = reuse a recent search.
 ```

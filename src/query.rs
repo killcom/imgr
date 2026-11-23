@@ -1,5 +1,7 @@
-//! Search text -> filter. Words are AND-ed; a leading '-' negates; 'a|b' inside
-//! one word means either.
+//! Search text -> filter. Conditions are separated by commas (also by spaces around
+//! command words like #tag or album:x) and AND-ed; a leading '-' negates; 'a|b' means either.
+//!   long hair, scar     prompt tags, each matched as a whole tag ('_' = ' ', no case, weights ignored)
+//!   __scar__  __scar  scar__   tag contains / ends with / starts with "scar"
 //!
 //!   #pixiv          has the hashtag            -#pixiv     does not
 //!   score>=4  score:5  score<3  score:0 (no score)
@@ -9,7 +11,7 @@
 //!   is:trash  is:missing  is:scored  is:unscored  is:tagged  is:untagged
 //!   sort:new  sort:old  sort:name  sort:score  sort:seed  sort:size  sort:random
 //!   album:3         pictures directly in album 3 (ids: see the album list); album:none = in no album
-//!   anything else   found in prompt, file name, tags, preset or checkpoint
+//!   anything else   a prompt tag (or hashtag / preset with that exact name)
 //! Pictures in the trash (or missing) are hidden unless asked for with is:trash / is:missing.
 
 use crate::db::Img;
@@ -31,7 +33,66 @@ enum Atom {
     AlbumTree(u32),
     /// time window [lo, hi) in unix seconds; mtime = file time ("date:"), else import time ("added:")
     Time { mtime: bool, lo: i64, hi: i64 },
-    Text(String),
+    /// a prompt tag: `pat` normalised (norm_tag); any_before / any_after = `__` wildcards
+    Text { pat: String, any_before: bool, any_after: bool },
+}
+
+/// Prompt tag as compared: lower case, '_' = ' ', brackets / backslashes and a
+/// trailing weight (":1.2") dropped, spaces collapsed.
+fn norm_tag_into(out: &mut String, raw: &str) {
+    out.clear();
+    let mut space = false;
+    for c in raw.chars() {
+        let c = if c == '_' { ' ' } else { c };
+        if matches!(c, '(' | ')' | '[' | ']' | '{' | '}' | '\\') {
+            continue;
+        }
+        if c.is_whitespace() {
+            space = !out.is_empty();
+            continue;
+        }
+        if space {
+            out.push(' ');
+            space = false;
+        }
+        out.extend(c.to_lowercase());
+    }
+    if let Some(k) = out.rfind(':') {
+        if k > 0 && out[k + 1..].trim().parse::<f32>().is_ok() {
+            out.truncate(k);
+            let t = out.trim_end().len();
+            out.truncate(t);
+        }
+    }
+}
+
+pub fn norm_tag(raw: &str) -> String {
+    let mut s = String::new();
+    norm_tag_into(&mut s, raw);
+    s
+}
+
+/// `scar` = the whole tag; `__scar` / `scar__` / `__scar__` = ends with / starts with / contains.
+fn text_atom(w: &str) -> Atom {
+    let mut s = w.trim();
+    let any_before = s.len() > 2 && s.starts_with("__");
+    if any_before {
+        s = &s[2..];
+    }
+    let any_after = s.len() > 2 && s.ends_with("__");
+    if any_after {
+        s = &s[..s.len() - 2];
+    }
+    Atom::Text { pat: norm_tag(s), any_before, any_after }
+}
+
+fn tag_hit(tag: &str, pat: &str, any_before: bool, any_after: bool) -> bool {
+    match (any_before, any_after) {
+        (false, false) => tag == pat,
+        (true, false) => tag.ends_with(pat),
+        (false, true) => tag.starts_with(pat),
+        (true, true) => tag.contains(pat),
+    }
 }
 
 /// Local midnight of a date, unix seconds.
@@ -191,31 +252,119 @@ fn album_atoms(v: &str) -> Vec<Atom> {
 }
 
 /// A word for the search text: quoted when it has spaces ("album:my album+").
+/// Keys of command words; a word starting with one of them (then : = < >) or with '#'
+/// stands alone, everything else is (part of) a prompt tag.
+const KEYS: &[&str] = &["score", "preset", "p", "ckpt", "model", "lora", "seed", "folder", "name", "is", "album", "앨범", "sort", "added", "date"];
+
+fn is_keyword(w: &str) -> bool {
+    let l = w.trim_start_matches('-').to_lowercase();
+    l.starts_with('#') || KEYS.iter().any(|k| l.strip_prefix(k).is_some_and(|r| r.starts_with([':', '=', '<', '>'])))
+}
+
 fn quote_word(w: &str) -> String {
-    if w.chars().any(char::is_whitespace) { format!("\"{w}\"") } else { w.to_string() }
+    if w.contains(',') || (w.chars().any(char::is_whitespace) && is_keyword(w)) { format!("\"{w}\"") } else { w.to_string() }
 }
 
+/// Words written back by the program are separated by ", ".
 fn join_words(v: Vec<String>) -> String {
-    v.iter().map(|w| quote_word(w)).collect::<Vec<_>>().join(" ")
+    v.iter().map(|w| quote_word(w)).collect::<Vec<_>>().join(", ")
 }
 
+/// Search text -> its conditions. Commas separate; command words (#tag, album:x, score>=4,
+/// "quoted") also stand alone between spaces; other words in a row form one prompt tag
+/// ("long hair"); a '-' word starts a new one. A lone or edge '|' joins two conditions (either).
 fn split_words(s: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut cur = String::new();
-    let mut quoted = false;
+    // tokens: (text, comma before it, was quoted)
+    let mut toks: Vec<(String, bool, bool)> = Vec::new();
+    let (mut cur, mut quoted, mut cur_q, mut comma) = (String::new(), false, false, false);
     for c in s.chars() {
         match c {
-            '"' => quoted = !quoted,
-            c if c.is_whitespace() && !quoted => {
+            '"' => {
+                quoted = !quoted;
+                cur_q = true;
+            }
+            c if !quoted && (c.is_whitespace() || c == ',') => {
                 if !cur.is_empty() {
-                    out.push(std::mem::take(&mut cur));
+                    toks.push((std::mem::take(&mut cur), comma, cur_q));
+                    comma = false;
+                }
+                cur_q = false;
+                if c == ',' {
+                    comma = true;
                 }
             }
             c => cur.push(c),
         }
     }
     if !cur.is_empty() {
-        out.push(cur);
+        toks.push((cur, comma, cur_q));
+    }
+    let mut out: Vec<String> = Vec::new();
+    let mut run: Option<String> = None;
+    let mut glue = false;
+    fn put(out: &mut Vec<String>, w: String, glue: &mut bool) {
+        if w.is_empty() {
+            return;
+        }
+        match out.last_mut() {
+            Some(last) if *glue => {
+                last.push('|');
+                last.push_str(&w);
+            }
+            _ => out.push(w),
+        }
+        *glue = false;
+    }
+    for (t, comma_before, q) in toks {
+        if comma_before {
+            if let Some(r) = run.take() {
+                put(&mut out, r, &mut glue);
+            }
+        }
+        if !q && t.chars().all(|c| c == '|') {
+            if let Some(r) = run.take() {
+                put(&mut out, r, &mut glue);
+            }
+            glue = !out.is_empty();
+            continue;
+        }
+        let mut t = t.as_str();
+        if !q && t.starts_with('|') {
+            if let Some(r) = run.take() {
+                put(&mut out, r, &mut glue);
+            }
+            glue = !out.is_empty();
+            t = t.trim_start_matches('|');
+        }
+        let trail = !q && t.ends_with('|');
+        let t = if trail { t.trim_end_matches('|') } else { t };
+        if q || is_keyword(t) || t.starts_with('-') {
+            if let Some(r) = run.take() {
+                put(&mut out, r, &mut glue);
+            }
+            if q || is_keyword(t) {
+                put(&mut out, t.to_string(), &mut glue);
+            } else {
+                run = Some(t.to_string());
+            }
+        } else {
+            match run.as_mut() {
+                Some(r) => {
+                    r.push(' ');
+                    r.push_str(t);
+                }
+                None => run = Some(t.to_string()),
+            }
+        }
+        if trail {
+            if let Some(r) = run.take() {
+                put(&mut out, r, &mut glue);
+            }
+            glue = !out.is_empty();
+        }
+    }
+    if let Some(r) = run.take() {
+        put(&mut out, r, &mut glue);
     }
     out
 }
@@ -237,14 +386,14 @@ fn parse_atom(w: &str) -> Option<Atom> {
         } else if let Some(n) = r.strip_prefix(':').or_else(|| r.strip_prefix('=')) {
             (Cmp::Eq, n)
         } else {
-            return Some(Atom::Text(lw));
+            return Some(text_atom(&lw));
         };
         return num.parse().ok().map(|n| Atom::Score(cmp, n));
     }
     for (key, mt) in [("added", false), ("date", true)] {
         if let Some(r) = lw.strip_prefix(key) {
             if r.starts_with([':', '=', '<', '>']) {
-                return Some(parse_time(mt, r).unwrap_or(Atom::Text(lw.clone())));
+                return Some(parse_time(mt, r).unwrap_or(text_atom(&lw)));
             }
         }
     }
@@ -262,10 +411,10 @@ fn parse_atom(w: &str) -> Option<Atom> {
             "name" => Atom::Name(v),
             "is" => Atom::Is(v),
             "album" | "앨범" => return album_atoms(&v).into_iter().next(),
-            _ => Atom::Text(lw),
+            _ => text_atom(&lw),
         });
     }
-    Some(Atom::Text(lw))
+    Some(text_atom(&lw))
 }
 
 /// Like `parse_atom`, but an album name shared by several albums gives them all.
@@ -366,12 +515,16 @@ fn atom(a: &Atom, i: &Img, q: &Query) -> bool {
             "untagged" => i.tags.is_empty(),
             _ => false,
         },
-        Atom::Text(t) => {
-            i.prompt.to_lowercase().contains(t.as_str())
-                || i.name().to_lowercase().contains(t.as_str())
-                || i.tags.iter().any(|x| x.contains(t.as_str()))
-                || i.preset.to_lowercase() == *t
-                || i.ckpt.to_lowercase().contains(t.as_str())
+        Atom::Text { pat, any_before, any_after } => {
+            if pat.is_empty() {
+                return false;
+            }
+            let mut buf = String::new();
+            let mut hit = |raw: &str| {
+                norm_tag_into(&mut buf, raw);
+                tag_hit(&buf, pat, *any_before, *any_after)
+            };
+            i.prompt.split([',', '\n']).any(&mut hit) || i.tags.iter().any(|t| hit(t)) || hit(&i.preset)
         }
     }
 }
@@ -390,6 +543,65 @@ pub fn toggle_word(q: &str, word: &str) -> String {
         v.push(word.to_string());
         join_words(v)
     }
+}
+
+/// Is one of `items` (e.g. "#a", "ckpt:x") a condition of the search, alone or inside an a|b group?
+pub fn has_item(q: &str, items: &[&str]) -> bool {
+    split_words(q).iter().any(|w| !w.starts_with('-') && w.split('|').any(|p| items.iter().any(|i| p.eq_ignore_ascii_case(i) || p.to_lowercase() == i.to_lowercase())))
+}
+
+/// The search without `items` (taken out of a|b groups too; a group left empty goes).
+pub fn remove_items(q: &str, items: &[&str]) -> String {
+    let same = |p: &str| items.iter().any(|i| p.eq_ignore_ascii_case(i) || p.to_lowercase() == i.to_lowercase());
+    let v: Vec<String> = split_words(q)
+        .into_iter()
+        .filter_map(|w| {
+            if w.starts_with('-') {
+                return Some(w);
+            }
+            let parts: Vec<&str> = w.split('|').filter(|p| !same(p)).collect();
+            (!parts.is_empty()).then(|| parts.join("|"))
+        })
+        .collect();
+    join_words(v)
+}
+
+/// A click on an item in 검색 뷰: take it out when it is there; else add it - `or`: to the
+/// last condition with '|' (either), otherwise as a condition of its own (all must match).
+/// `same` = other spellings that count as this item (album:trip for album:trip+).
+pub fn click_item(q: &str, item: &str, same: &[&str], or: bool) -> String {
+    let mut all = vec![item];
+    all.extend_from_slice(same);
+    if has_item(q, &all) {
+        return remove_items(q, &all);
+    }
+    let neg = format!("-{item}");
+    let mut v: Vec<String> = split_words(q).into_iter().filter(|w| !w.eq_ignore_ascii_case(&neg)).collect();
+    let last = v.iter().rposition(|w| !w.starts_with('-') && !w.to_lowercase().starts_with("sort:"));
+    match last {
+        Some(k) if or => {
+            v[k].push('|');
+            v[k].push_str(item);
+        }
+        _ => v.push(item.to_string()),
+    }
+    join_words(v)
+}
+
+/// Ctrl+click: this item as the only condition of its kind (`key`: "#", "ckpt:", "album:" ...).
+pub fn only_item(q: &str, item: &str, key: &str) -> String {
+    let lk = key.to_lowercase();
+    let mut v: Vec<String> = split_words(q)
+        .into_iter()
+        .filter_map(|w| {
+            let parts: Vec<&str> = w.split('|').filter(|p| !p.trim_start_matches('-').to_lowercase().starts_with(&lk)).collect();
+            let neg = w.starts_with('-') && !parts.is_empty() && !parts[0].starts_with('-');
+            let s = parts.join("|");
+            (!parts.is_empty()).then(|| if neg { format!("-{s}") } else { s })
+        })
+        .collect();
+    v.push(item.to_string());
+    join_words(v)
 }
 
 /// Replace every word with this prefix (e.g. "score") by `word` (or remove them when None).
@@ -463,7 +675,7 @@ pub fn without_album(q: &str) -> String {
         })
         .map(|w| quote_word(&w))
         .collect::<Vec<_>>()
-        .join(" ")
+        .join(", ")
 }
 
 /// Does the search name an album at all (also negated or unknown ones)?
@@ -474,12 +686,7 @@ pub fn names_album(q: &str) -> bool {
     })
 }
 
-/// Values of the (non-negated) `key:a|key:b` word, e.g. the presets picked in the side panel.
-pub fn group_values(q: &str, key: &str) -> Vec<String> {
-    group_values_cased(q, key).into_iter().map(|v| v.to_lowercase()).collect()
-}
-
-/// `group_values` keeping the letters' case (album names).
+/// Values of the (non-negated) `key:a|key:b` word, keeping the letters' case (album names).
 pub fn group_values_cased(q: &str, key: &str) -> Vec<String> {
     let pre = format!("{key}:");
     for w in split_words(q) {
@@ -488,16 +695,6 @@ pub fn group_values_cased(q: &str, key: &str) -> Vec<String> {
         }
     }
     Vec::new()
-}
-
-/// Replace the `key:` word by a group of values (a|b ...), or remove it when empty.
-pub fn set_group(q: &str, key: &str, vals: &[String]) -> String {
-    let pre = format!("{key}:");
-    if vals.is_empty() {
-        return set_prefixed(q, &pre, None);
-    }
-    let w = vals.iter().map(|v| format!("{pre}{v}")).collect::<Vec<_>>().join("|");
-    set_prefixed(q, &pre, Some(&w))
 }
 
 pub fn has_word(q: &str, word: &str) -> bool {
@@ -560,9 +757,9 @@ mod tests {
     #[test]
     fn word_editing() {
         assert_eq!(toggle_word("a #x", "#x"), "a");
-        assert_eq!(toggle_word("a", "#x"), "a #x");
-        assert_eq!(toggle_word("a -#x", "#x"), "a #x");
-        assert_eq!(set_prefixed("a score>=3", "score", Some("score:5")), "a score:5");
+        assert_eq!(toggle_word("a", "#x"), "a, #x");
+        assert_eq!(toggle_word("a -#x", "#x"), "a, #x");
+        assert_eq!(set_prefixed("a score>=3", "score", Some("score:5")), "a, score:5");
         assert_eq!(set_prefixed("a score>=3", "score", None), "a");
     }
 
@@ -584,7 +781,7 @@ mod tests {
         assert_eq!(album_word("album:top"), Some(Some(0)));
         assert_eq!(album_query(Some(0), "x"), "album:top");
         assert!(!Query::parse("album:top").matches(&a));
-        assert_eq!(without_album("ckpt:x album:3 #a"), "ckpt:x #a");
+        assert_eq!(without_album("ckpt:x album:3 #a"), "ckpt:x, #a");
         assert!(names_album("-album:3") && !names_album("ckpt:x"));
     }
 
@@ -622,9 +819,52 @@ mod tests {
         assert!(Query::parse("\"album:qz test\"").matches(&i) && !Query::parse("\"album:qztrip/qz test\"").matches(&i));
         assert!(!Query::parse("album:nosuchalbum").matches(&i));
         assert_eq!(album_word("album:qztrip"), Some(Some(41)));
-        assert_eq!(toggle_word("\"album:qz test\"", "#a"), "\"album:qz test\" #a");
-        assert_eq!(set_group("x", "album", &["qz test+".to_string(), "qztrip+".to_string()]), "x \"album:qz test+|album:qztrip+\"");
-        assert_eq!(rename_album_words("x album:41+|album:none -album:qztrip", |id| format!("n{id}")), "x album:n41+|album:none -album:n41");
+        assert_eq!(toggle_word("\"album:qz test\"", "#a"), "\"album:qz test\", #a");
+        assert_eq!(rename_album_words("x album:41+|album:none -album:qztrip", |id| format!("n{id}")), "x, album:n41+|album:none, -album:n41");
         assert_eq!(group_values_cased("\"album:Qz test+|album:none\"", "album"), vec!["Qz test+", "none"]);
+    }
+
+    #[test]
+    fn commas_and_whole_tags() {
+        let w = |q: &str| split_words(q);
+        assert_eq!(w("long hair, scar, #a"), ["long hair", "scar", "#a"]);
+        assert_eq!(w("long hair #a score>=4 red eyes"), ["long hair", "#a", "score>=4", "red eyes"]);
+        assert_eq!(w("#a | #b"), ["#a|#b"]);
+        assert_eq!(w("#a |#b, c"), ["#a|#b", "c"]);
+        assert_eq!(w("long hair | short hair"), ["long hair|short hair"]);
+        assert_eq!(w("red -blue eyes"), ["red", "-blue eyes"]);
+        assert_eq!(w("\"album:my trip\" x"), ["album:my trip", "x"]);
+        assert_eq!(w("album:x+ #a #b"), ["album:x+", "#a", "#b"]);
+        let mut i = img();
+        i.prompt = "1girl, (Long_Hair:1.2), facial scar, scar on cheek, \\(artist\\), scarf\nblue eyes".into();
+        let m = |q: &str| Query::parse(q).matches(&i);
+        assert!(m("long hair") && m("LONG_HAIR") && m("long hair, blue eyes"));
+        assert!(!m("long") && !m("hair"), "a part of a tag is not the tag");
+        assert!(!m("scar"), "no tag is exactly scar");
+        assert!(m("__scar") && m("scar__") && m("__scar__") && m("artist"));
+        let mut i = i.clone();
+        i.prompt = "scarf, 1girl".into();
+        let m = |q: &str| Query::parse(q).matches(&i);
+        assert!(!m("__scar") && m("scar__") && m("__scar__"));
+        assert!(m("#pixiv | #nope") && m("#nope|#alice") && !m("#nope, #alice"));
+        assert!(m("pixiv") && m("animea"), "hashtags and the preset by name");
+        assert!(!m("__") && !m("____"));
+        assert!(m("-white hair") && !m("-1girl"));
+    }
+
+    #[test]
+    fn clicks_and_or() {
+        assert_eq!(click_item("", "#a", &[], false), "#a");
+        assert_eq!(click_item("#a", "#b", &[], false), "#a, #b");
+        assert_eq!(click_item("#a", "#b", &[], true), "#a|#b");
+        assert_eq!(click_item("#a|#b", "ckpt:x", &[], true), "#a|#b|ckpt:x");
+        assert_eq!(click_item("#a|#b, long hair", "#b", &[], true), "#a, long hair");
+        assert_eq!(click_item("#a, sort:new", "#b", &[], true), "#a|#b, sort:new");
+        assert_eq!(click_item("#a, -#c", "#b", &[], true), "#a|#b, -#c");
+        assert_eq!(click_item("-#b", "#b", &[], false), "#b");
+        assert_eq!(click_item("album:trip", "album:trip+", &["album:trip"], true), "");
+        assert!(has_item("x|#A", &["#a"]) && !has_item("-#a", &["#a"]));
+        assert_eq!(only_item("#a|ckpt:y, #b, ckpt:z, long hair", "ckpt:x", "ckpt:"), "#a, #b, long hair, ckpt:x");
+        assert_eq!(only_item("#a, #b", "#c", "#"), "#c");
     }
 }

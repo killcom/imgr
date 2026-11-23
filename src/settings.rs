@@ -52,6 +52,8 @@ pub struct Settings {
     /// Take commands from scripts on this PC (127.0.0.1:47811, tools/imgr_ctl.py).
     /// Off by default; env IMGR_CTL=1 turns it on for one run. Read at start.
     pub ctl: bool,
+    /// [AND | OR] left of the search box: how a click in 검색 뷰 adds its item.
+    pub search_or: bool,
     /// Screen language: "ko" or "en" (first start: the language of Windows).
     pub lang: String,
 }
@@ -91,6 +93,7 @@ impl Default for Settings {
             per_folder: 2000,
             kind_wf: true,
             kind_plain: false,
+            search_or: false,
             ctl: false,
             lang: crate::i18n::system_lang(),
         }

@@ -17,14 +17,28 @@ impl App {
             if r.clicked() {
                 self.modal = Some(Modal::Settings { per_folder: self.settings.per_folder.to_string(), ctl: self.settings.ctl });
             }
-            // the room right of the ⚙ (a wrapped row reports the whole row as available)
+            // [AND | OR]: how a click in 검색 뷰 adds its item to the search
+            let or = self.settings.search_or;
+            let t = egui::RichText::new(if or { "OR" } else { "AND" }).strong().color(Color32::WHITE);
+            let r = ui
+                .add(egui::Button::new(t).fill(if or { Color32::from_rgb(150, 95, 40) } else { Color32::from_rgb(45, 90, 140) }).min_size(vec2(44.0, 0.0)))
+                .on_hover_text(if or {
+                    tr("OR: 검색 뷰에서 누른 항목이 마지막 조건에 | 로 붙음 (하나라도 맞으면)\n클릭: AND 로", "OR: an item clicked in Search view joins the last condition with | (either one)\nClick: switch to AND")
+                } else {
+                    tr("AND: 검색 뷰에서 누른 항목이 새 조건으로 붙음 (모두 맞아야)\n클릭: OR 로", "AND: an item clicked in Search view is added as a new condition (all must match)\nClick: switch to OR")
+                });
+            self.mark("and_or", r.rect);
+            if r.clicked() {
+                self.settings.search_or = !or;
+            }
+            // the room right of the switch (a wrapped row reports the whole row as available)
             let room = ui.max_rect().right() - r.rect.right() - ui.spacing().item_spacing.x;
             let one_row = room - self.top_rest_w - 12.0 >= 220.0;
             let id = egui::Id::new("search");
             let resp = ui.add(
                 egui::TextEdit::singleline(&mut self.query_text)
                     .id(id)
-                    .hint_text(tr("검색  예) #pixiv score>=4 bikini   (Ctrl+F)", "Search  e.g. #pixiv score>=4 bikini   (Ctrl+F)"))
+                    .hint_text(tr("검색  예) long hair, __scar__, #pixiv, score>=4   · a|b = 하나라도   (Ctrl+F)", "Search  e.g. long hair, __scar__, #pixiv, score>=4   · a|b = either   (Ctrl+F)"))
                     // room for the buttons on the right, as wide as they were last frame
                     .desired_width(if one_row { room - self.top_rest_w - 12.0 } else { (room - 8.0).max(160.0) }),
             );
@@ -122,6 +136,7 @@ impl App {
         let mut new_q: Option<String> = None;
         // the 검색 뷰 filters search all pictures: in the album view they start without the album
         let q = if self.view == View::Albums { query::without_album(&self.query_text) } else { self.query_text.clone() };
+        let or = self.settings.search_or;
         let mut action: Option<LeftAction> = None;
         egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
             let live = self.db.images.len().saturating_sub(self.missing_n + self.trash_n);
@@ -239,18 +254,18 @@ Click: show only these", self.score_counts[0]));
                         ui.label(egui::RichText::new(tr("아직 없음. 그림을 고르고 T 를 눌러 붙이세요", "None yet. Pick a picture and press T to add one")).color(DIM).small());
                     }
                     ui.horizontal_wrapped(|ui| {
-                        if !self.tag_counts.is_empty() && ui.selectable_label(query::has_word(&q, "is:untagged"), tr("해시태그 없음", "no hashtags")).on_hover_text(tr("해시태그가 하나도 없는 그림", "Pictures without any hashtag")).clicked() {
-                            new_q = Some(query::toggle_word(&q, "is:untagged"));
+                        if !self.tag_counts.is_empty() && ui.selectable_label(query::has_item(&q, &["is:untagged"]), tr("해시태그 없음", "no hashtags")).on_hover_text(tr("해시태그가 하나도 없는 그림", "Pictures without any hashtag")).clicked() {
+                            new_q = Some(query::click_item(&q, "is:untagged", &[], or));
                         }
                         for (t, n) in &self.tag_counts {
                             let w = format!("#{t}");
                             let neg = format!("-#{t}");
-                            let on = query::has_word(&q, &w);
+                            let on = query::has_item(&q, &[&w]);
                             let off = query::has_word(&q, &neg);
                             let label = if off { format!("✕#{t} {n}") } else { format!("#{t} {n}") };
-                            let r = ui.selectable_label(on || off, label).on_hover_text(tr("클릭: 이 태그만 보기 / 오른쪽 클릭: 메뉴", "Click: show only this tag / right-click: menu"));
+                            let r = ui.selectable_label(on || off, label).on_hover_text(click_tip());
                             if r.clicked() {
-                                new_q = Some(query::toggle_word(&q, &w));
+                                new_q = Some(if ui.input(|i| i.modifiers.ctrl) { query::only_item(&q, &w, "#") } else { query::click_item(&q, &w, &[], or) });
                             }
                             r.context_menu(|ui| {
                                 if ui.button(tr("이 태그 빼고 보기", "Show without this tag")).clicked() {
@@ -279,10 +294,10 @@ Click: show only these", self.score_counts[0]));
                 self.ui_album_tree(ui, &q, &mut new_q, &mut action, false);
             });
             egui::CollapsingHeader::new(egui::RichText::new(tr("체크포인트", "Checkpoint")).color(ACCENT).strong()).id_salt("sec_ckpt").default_open(true).show(ui, |ui| {
-                list_counts(ui, &self.ckpt_counts, "ckpt", &q, &mut new_q, &mut action);
+                list_counts(ui, &self.ckpt_counts, "ckpt", &q, &mut new_q, or);
             });
             egui::CollapsingHeader::new(egui::RichText::new("LoRA").color(ACCENT).strong()).id_salt("sec_lora").default_open(false).show(ui, |ui| {
-                list_counts(ui, &self.lora_counts, "lora", &q, &mut new_q, &mut action);
+                list_counts(ui, &self.lora_counts, "lora", &q, &mut new_q, or);
             });
             // 태그 여부: ComfyUI pictures (workflow info kept) and plain ones; both on = all
             egui::CollapsingHeader::new(egui::RichText::new(tr("태그 여부", "Workflow info")).color(ACCENT).strong()).id_salt("sec_kind").default_open(true).show(ui, |ui| {
@@ -305,7 +320,7 @@ Both on = all, only one on = just those (not applied in Album view)"));
                 });
             });
             egui::CollapsingHeader::new(egui::RichText::new(tr("폴더", "Folder")).color(ACCENT).strong()).id_salt("sec_folder").default_open(false).show(ui, |ui| {
-                list_counts(ui, &self.folder_counts, "folder", &q, &mut new_q, &mut action);
+                list_counts(ui, &self.folder_counts, "folder", &q, &mut new_q, or);
             });
             });
         });
@@ -388,22 +403,16 @@ Both on = all, only one on = just those (not applied in Album view)"));
         // an album row picks the album with its sub albums (album:trip+); album:trip (only that album) counts as picked too
         let same = |a: &str, b: &str| a.eq_ignore_ascii_case(b) || a.to_lowercase() == b.to_lowercase();
         let is_on = |v: &str| group.iter().any(|x| same(x, v) || x.strip_suffix('+').is_none() && same(&format!("{x}+"), v));
+        let or = self.settings.search_or;
+        // a click adds / takes out the album (AND or OR by the switch); Ctrl+click: only this album
         let pick = |v: &str, ctrl: bool| -> String {
-            let on = is_on(v);
-            let plain = v.trim_end_matches('+');
-            let mut g = group.clone();
+            let item = format!("album:{v}");
+            let plain = format!("album:{}", v.trim_end_matches('+'));
             if ctrl {
-                if on {
-                    g.retain(|x| !same(x, v) && !same(x, plain));
-                } else {
-                    g.push(v.to_string());
-                }
-            } else if on && g.len() == 1 {
-                g.clear();
+                query::only_item(q, &item, "album:")
             } else {
-                g = vec![v.to_string()];
+                query::click_item(q, &item, &[&plain], or)
             }
-            query::set_group(q, "album", &g)
         };
         if nav {
             let (r, _) = tree_row(ui, 0.0, "/".to_string(), in_view && cur.is_none(), None, "nav_root");
@@ -423,7 +432,7 @@ Both on = all, only one on = just those (not applied in Album view)"));
         // 검색 뷰 only: 무소속 (in the 앨범 뷰 those pictures sit at the top, after the albums)
         if !nav {
             let (r, _) = tree_row(ui, base, trf!("무소속 {}", "No album {}", self.unfiled_n), is_on("none"), None, "album_none");
-            let r = r.on_hover_text(tr("어느 앨범에도 없는 그림\n클릭: 이것만 보기 / Ctrl+클릭: 여러 개 같이 보기\n그림을 여기 끌어다 놓으면 모든 앨범에서 빠짐", "Pictures in no album\nClick: show only these / Ctrl+click: show several together\nDrop pictures here to remove them from all albums"));
+            let r = r.on_hover_text(tr("어느 앨범에도 없는 그림\n클릭: 검색에 더하기·빼기 (AND·OR 대로) / Ctrl+클릭: 앨범은 이것만\n그림을 여기 끌어다 놓으면 모든 앨범에서 빠짐", "Pictures in no album\nClick: add to / take out of the search (AND or OR) / Ctrl+click: only this album\nDrop pictures here to remove them from all albums"));
             self.mark("album_none", r.rect);
             self.album_drop.push((None, r.rect.intersect(ui.clip_rect())));
             if r.clicked() {
@@ -446,7 +455,7 @@ Both on = all, only one on = just those (not applied in Album view)"));
             let r = r.on_hover_text(if nav {
                 tr("클릭: 앨범 뷰에서 열기 / 그림을 끌어다 놓으면 넣기 / 오른쪽 클릭: 메뉴", "Click: open in Album view / drop pictures to add them / right-click: menu")
             } else {
-                tr("클릭: 이 앨범만 보기 (하위 앨범 포함) / Ctrl+클릭: 여러 앨범 같이 보기 (다른 조건과 같이) / 그림을 끌어다 놓으면 넣기", "Click: show only this album (with sub albums) / Ctrl+click: show several albums together (with other conditions) / drop pictures to add them")
+                tr("클릭: 검색에 더하기·빼기 (하위 앨범 포함, AND·OR 대로) / Ctrl+클릭: 앨범은 이것만 / 그림을 끌어다 놓으면 넣기", "Click: add to / take out of the search (with sub albums; AND or OR) / Ctrl+click: only this album / drop pictures to add them")
             });
             self.mark(&key, r.rect);
             self.album_drop.push((Some(id), r.rect.intersect(ui.clip_rect())));
@@ -934,7 +943,15 @@ fn tree_row(ui: &mut egui::Ui, indent: f32, text: String, on: bool, fold: Option
     (resp, fold_clicked)
 }
 
-fn list_counts(ui: &mut egui::Ui, items: &[(String, usize)], key: &str, q: &str, new_q: &mut Option<String>, _action: &mut Option<LeftAction>) {
+/// The tooltip of an item in 검색 뷰.
+fn click_tip() -> &'static str {
+    tr(
+        "클릭: 검색에 더하기 / 다시 클릭: 빼기 (검색칸 왼쪽 AND·OR 대로)\nCtrl+클릭: 이 종류는 이것만 / 오른쪽 클릭: 메뉴",
+        "Click: add to the search / click again: take out (AND or OR, left of the search box)\nCtrl+click: only this of its kind / right-click: menu",
+    )
+}
+
+fn list_counts(ui: &mut egui::Ui, items: &[(String, usize)], key: &str, q: &str, new_q: &mut Option<String>, or: bool) {
     if items.is_empty() {
         ui.label(egui::RichText::new(tr("없음", "none")).color(DIM).small());
         return;
@@ -943,45 +960,18 @@ fn list_counts(ui: &mut egui::Ui, items: &[(String, usize)], key: &str, q: &str,
         if items.len() > 80 {
             ui.label(egui::RichText::new(trf!("많이 쓰는 80개만 보임 (전체 {}개, 나머지는 검색칸에 {key}:이름)", "Only the 80 most used are shown ({} in total, type {key}:name in the search box for the rest)", items.len())).color(DIM).small());
         }
-        let group = query::group_values(q, key);
         for (v, n) in items.iter().take(80) {
-            let lv = v.to_lowercase();
             let w = format!("{key}:{v}");
-            let on = group.contains(&lv);
+            let on = query::has_item(q, &[&w]);
             let neg = format!("-{w}");
             let off = query::has_word(q, &neg);
-            let r = ui
-                .selectable_label(on || off, if off { format!("✕{v} {n}") } else { format!("{v} {n}") })
-                .on_hover_text(tr("클릭: 이것만 보기 / Ctrl+클릭: 여러 개 같이 보기 / 오른쪽 클릭: 메뉴", "Click: show only this / Ctrl+click: show several together / right-click: menu"));
+            let r = ui.selectable_label(on || off, if off { format!("✕{v} {n}") } else { format!("{v} {n}") }).on_hover_text(click_tip());
             if r.clicked() {
-                let ctrl = ui.input(|i| i.modifiers.ctrl);
-                let mut g = group.clone();
-                if ctrl {
-                    if on {
-                        g.retain(|x| *x != lv);
-                    } else {
-                        g.push(lv.clone());
-                    }
-                } else if on && g.len() == 1 {
-                    g.clear();
-                } else {
-                    g = vec![lv.clone()];
-                }
-                *new_q = Some(query::set_group(q, key, &g));
+                *new_q = Some(if ui.input(|i| i.modifiers.ctrl) { query::only_item(q, &w, &format!("{key}:")) } else { query::click_item(q, &w, &[], or) });
             }
             r.context_menu(|ui| {
                 if ui.button(tr("이것 빼고 보기", "Show without this")).clicked() {
                     *new_q = Some(query::toggle_word(q, &neg));
-                    ui.close();
-                }
-                if ui.button(if on { tr("같이 보기에서 빼기    Ctrl+클릭", "Remove from combined view    Ctrl+click") } else { tr("같이 보기에 더하기    Ctrl+클릭", "Add to combined view    Ctrl+click") }).clicked() {
-                    let mut g = group.clone();
-                    if on {
-                        g.retain(|x| *x != lv);
-                    } else {
-                        g.push(lv.clone());
-                    }
-                    *new_q = Some(query::set_group(q, key, &g));
                     ui.close();
                 }
             });

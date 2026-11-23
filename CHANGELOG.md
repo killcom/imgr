@@ -1,5 +1,10 @@
 # 바뀐 것 / Changes
 
+## v0.21
+- 검색 조건을 콤마로 나눔 (long hair, scar) — search conditions are separated by commas
+- 그냥 글자는 프롬프트 태그를 통째로 찾음, __scar__ / __scar / scar__ = 들어간 / 끝나는 / 시작하는 태그 — plain text finds a whole prompt tag; __scar__ / __scar / scar__ = contains / ends with / starts with
+- 검색칸 왼쪽 [AND | OR]: 검색 뷰에서 누른 항목을 새 조건으로, 또는 마지막 조건에 | 로 붙임. Ctrl+클릭 = 그 종류는 이것만 — an [AND | OR] switch left of the search box: items clicked in Search view are added as a new condition or joined to the last one with |; Ctrl+click = only this of its kind
+
 ## v0.20
 - 기록을 db.json 대신 data\imgr.db(SQLite)에 저장, 바뀐 그림만 씀 — records are kept in data\imgr.db (SQLite) instead of db.json; a save writes only the pictures that changed
 - 처음 켤 때 db.json을 한 번 옮기고 하나하나 대조, db.json.v016으로 남김 — on first start db.json is moved once, checked field by field and kept as db.json.v016

@@ -2544,7 +2544,9 @@ impl App {
     }
 }
 
-const HELP: &str = "단어 여러 개 = 모두 맞는 것 (AND).  앞에 - = 빼기.  a|b = 둘 중 하나.
+const HELP: &str = "조건은 콤마로 나눔 = 모두 맞는 것 (AND).  앞에 - = 빼기.  a|b = 둘 중 하나 (OR).
+long hair, scar   프롬프트 태그를 통째로 (띄어쓰기 = _, 대소문자·가중치 (tag:1.2) 무시)
+__scar__  __scar  scar__   scar가 들어간 / scar로 끝나는 / scar로 시작하는 태그
 
 #pixiv            해시태그가 있는 것        -#pixiv   없는 것
 #올림|#올릴것       둘 중 하나라도
@@ -2561,10 +2563,11 @@ is:trash  is:unscored  is:scored  is:tagged  is:untagged  is:missing
 added:today  added:yesterday  added:3d(최근 3일)  added:11-15  added>=2026-11-01   (imgr에 넣은 날)
 date:today  date<11-10 …                                                      (파일 시각 = 만든 날)
 sort:new  old  name  score  seed  size  random
-그 밖의 글자        프롬프트·파일 이름·태그·프리셋·체크포인트에서 찾음
-\"white hair\"      띄어쓰기 있는 말은 따옴표
+그 밖의 글자        프롬프트 태그 (해시태그·프리셋 이름도). 파일 이름은 name:, 체크포인트는 ckpt:
+#a, album:x 처럼 기호 붙은 낱말은 띄어쓰기로도 나뉨
 
-왼쪽 목록을 누르면 검색에 넣고 빼 줍니다 (오른쪽 클릭 = 메뉴).
+왼쪽 목록을 누르면 검색에 넣고 빼 줍니다: 검색칸 왼쪽 AND = 새 조건, OR = 마지막 조건에 | 로.
+Ctrl+클릭 = 그 종류는 이것만.  오른쪽 클릭 = 메뉴.
 
 키
   1~6 점수  0 지우기 (크게 보기에서는 점수 주면 다음 그림으로)
@@ -2584,7 +2587,9 @@ sort:new  old  name  score  seed  size  random
   크게 보기: 휠 확대 · 끌어서 이동 · R 맞춤 · Z 실제 크기 · 마우스 앞/뒤 버튼 넘기기 · ` 위아래 글 숨기기/보이기
   왼쪽 태그 여부: 워크플로(ComfyUI 정보 있는 그림) / 태그없음 — 둘 다 켜면 모두 (앨범 뷰·휴지통에는 적용 안 됨)";
 
-const HELP_EN: &str = "Several words = all must match (AND).  A leading - = exclude.  a|b = either one.
+const HELP_EN: &str = "Conditions are separated by commas = all must match (AND).  A leading - = exclude.  a|b = either one (OR).
+long hair, scar   whole prompt tags (space = _, case and weights (tag:1.2) ignored)
+__scar__  __scar  scar__   tags containing / ending with / starting with scar
 
 #pixiv            pictures with the hashtag        -#pixiv   without it
 #posted|#todo      either hashtag
@@ -2601,10 +2606,11 @@ is:trash  is:unscored  is:scored  is:tagged  is:untagged  is:missing
 added:today  added:yesterday  added:3d (last 3 days)  added:11-15  added>=2026-11-01   (day added to imgr)
 date:today  date<11-10 ...                                                      (file time = day created)
 sort:new  old  name  score  seed  size  random
-any other text        searched in prompt, file name, tags, preset, checkpoint
-\"white hair\"      quote words that contain spaces
+any other text        a prompt tag (or a hashtag / preset by name). File names: name:, checkpoints: ckpt:
+words with a sign like #a or album:x are also split by spaces
 
-Clicking an item in the left list adds / removes it in the search (right click = menu).
+Clicking an item in the left list adds / removes it: AND (left of the search box) = a new condition, OR = joined to the last one with |.
+Ctrl+click = only this of its kind.  Right click = menu.
 
 Keys
   1~6 score  0 clear (in the Viewer, scoring moves on to the next picture)
