@@ -1,0 +1,44 @@
+# Release: push a tag like v0.14 (same version as Cargo.toml and a "## v0.14" part in CHANGELOG.md).
+# GitHub builds imgr on Windows, runs the unit tests and puts imgr_v0.14_win64.zip on the Releases page.
+# "Run workflow" (manual) builds and tests only, and keeps the zip as a download on the run page.
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Unit tests
+        run: cargo test --release --locked
+
+      - name: Build
+        run: cargo build --release --locked
+
+      - name: Package
+        shell: pwsh
+        run: ./tools/package.ps1 -Tag "${{ github.ref_type == 'tag' && github.ref_name || '' }}"
+
+      - name: Keep the zip on the run page
+        uses: actions/upload-artifact@v4
+        with:
+          name: imgr-win64
+          path: dist/*.zip
+
+      - name: Publish the release
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          name: imgr ${{ github.ref_name }}
+          body_path: dist/notes.md
+          files: dist/*.zip

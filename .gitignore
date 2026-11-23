@@ -1,0 +1,11 @@
+# build output
+/target/
+/dist/
+
+# imgr's own working folders when run from the repo (pictures and records)
+/imgs/
+/imgsrc/
+/data/
+
+*.exe
+*.pdb
