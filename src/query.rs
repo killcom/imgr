@@ -590,7 +590,6 @@ fn atom(a: &Atom, i: &Img, q: &Query) -> bool {
             }
         }
         // album 0 = put at the top by hand (the picture also sits in other albums)
-        Atom::Album(Some(0)) => i.albums.is_empty() || i.albums.contains(&0),
         Atom::Album(None) => i.albums.iter().all(|&a| a == 0),
         Atom::Album(Some(a)) => i.albums.contains(a),
         Atom::AlbumTree(a) => q.trees.get(a).is_some_and(|t| i.albums.iter().any(|x| t.contains(x))),
@@ -947,7 +946,7 @@ mod tests {
         assert!(q.matches(&i));
         assert!(!Query::parse("album:3").matches(&i));
         assert!(!Query::parse("album:top").matches(&i));
-        i.albums.clear();
+        i.albums = vec![0];
         assert!(Query::parse("album:top").matches(&i));
         // album 0 = also at the top: shown at the top and in its album, not 무소속
         i.albums = vec![5, 0];

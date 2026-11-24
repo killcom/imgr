@@ -166,7 +166,7 @@ Click a cell, move with arrow keys, 1~6 score, double-click = view large. Right-
 
 ```text
 One picture can be in several albums at once. You can also make sub-albums inside an album.
-"No album" = pictures that are in no album. Pictures never go there automatically. Adding, removing and moving pictures can be undone with Ctrl+Z.
+"No album" = pictures that are only at the top (/), in no other album. New pictures go to the top. Adding, removing and moving pictures can be undone with Ctrl+Z.
 Moving, deleting and renaming albums and importing are not undone by Ctrl+Z (Ctrl+Z says so; press it again for the step before).
 There are two ways to view:
   🗂 Album view = see albums as folder cells, like Explorer (A, / and the albums in the left Album view)
@@ -174,8 +174,8 @@ There are two ways to view:
               click = add that album (including pictures of its sub-albums) to / remove it from the search (by AND/OR), Ctrl+click = only that album.
               It filters together with other filters (score, tag, checkpoint…)
 Album view:
-  The top level (/) shows the top-level albums, then the pictures put at the top and those in no album (No album).
-  The top holds pictures like an album: a picture in Album1 can sit at the top too. Copying a top picture into an album (Ctrl+C, Ctrl+drag, right-click → Album) keeps it at the top. Inside an album, sub-album cells come first, then that album's pictures. Clicking the gap between cells does nothing.
+  The top level (/) shows the top-level albums, then the pictures at the top.
+  The top is simply an album: a picture can be at the top and in other albums at once, and copy, move and Del follow the same rules as in any album (copy = stays where it was too, move = leaves where it was). Inside an album, sub-album cells come first, then that album's pictures. Clicking the gap between cells does nothing.
   New album: Ctrl+N, or right-click an empty area → "New album…" (inside an album it makes a sub-album, at the top level a top-level album).
            It is created only when you enter a name and press 'Create' (if you cancel, nothing is created). "＋ New album" at the top does the same.
   Click an album cell = open it right away.

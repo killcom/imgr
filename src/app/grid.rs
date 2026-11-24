@@ -522,7 +522,7 @@ impl App {
         p.text(pos2(strip.left() + 6.0, strip.bottom() - 3.0), egui::Align2::LEFT_BOTTOM, sub, egui::FontId::proportional(11.0 + UI_FONT_PLUS), DIM);
         if resp.hovered() && self.marquee.is_none() && self.pic_drag.is_none() {
             let tip = match target {
-                None => tr("무소속 — 어느 앨범에도 없는 그림\n더블클릭: 열기 · 그림을 여기 놓으면 모든 앨범에서 빠짐", "Unassigned — pictures in no album\nDouble-click: open · dropping pictures here removes them from all albums").to_string(),
+                None => tr("무소속 — 맨 위에만 있는 그림\n더블클릭: 열기 · 그림을 여기 놓으면 다른 앨범에서 모두 빠지고 맨 위에만 남음", "Unassigned — pictures only at the top\nDouble-click: open · dropping pictures here takes them out of every other album, so they are only at the top").to_string(),
                 Some(id) => trf!("{0}\n더블클릭·Enter: 열기 · 클릭/Ctrl/Shift/끌기: 고르기\n고른 앨범을 다른 앨범에 끌어 놓기 또는 Ctrl+X → Ctrl+V: 옮기기\nF2 이름 · {1} 지우기 (그림은 그대로) · {2} 그림까지 · 오른쪽 클릭: 메뉴", "{0}\nDouble-click / Enter: open · click / Ctrl / Shift / drag: select\nDrag selected albums onto another album, or Ctrl+X → Ctrl+V: move\nF2 rename · {1} delete (pictures kept) · {2} with pictures · right-click: menu", self.db.album_path(id), self.del_keys().0, self.del_keys().1),
             };
             resp.clone().on_hover_text(tip);
@@ -666,25 +666,21 @@ impl App {
             }
             egui::ScrollArea::vertical().max_height(420.0).show(ui, |ui| {
                 for (id, name, depth) in &list {
-                    let all = ids.iter().filter_map(|x| self.img(x)).all(|i| i.albums.contains(id) || (*id == 0 && i.albums.is_empty()));
+                    let all = ids.iter().filter_map(|x| self.img(x)).all(|i| i.albums.contains(id));
                     let label = format!("{}{}{}", "    ".repeat(*depth), if all { "✓ " } else { "" }, name);
-                    // a picture in no album is always at the top: nothing to take it out of
-                    let fixed = *id == 0 && all && ids.iter().filter_map(|x| self.img(x)).any(|i| i.albums.is_empty());
-                    let tip = if fixed {
-                        tr("앨범에 없는 그림은 늘 맨 위에 보임", "Pictures in no album always show at the top")
-                    } else if all {
+                    let tip = if all {
                         tr("누르면 이 앨범에서 뺌 (Del 과 같음)", "Click to remove from this album (same as Del)")
                     } else {
                         tr("누르면 이 앨범에 넣음", "Click to add to this album")
                     };
-                    if ui.add_enabled(!fixed, egui::Button::new(label)).on_hover_text(tip).on_disabled_hover_text(tip).clicked() {
+                    if ui.button(label).on_hover_text(tip).clicked() {
                         act = Some((*id, all));
                         ui.close();
                     }
                 }
             });
             ui.separator();
-            if ui.button(tr("모든 앨범에서 빼기", "Remove from all albums")).clicked() {
+            if ui.button(tr("맨 위에만 두기 (다른 앨범에서 모두 빼기)", "Only at the top (out of every other album)")).clicked() {
                 self.add_to_album(&ids, None);
                 ui.close();
             }

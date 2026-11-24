@@ -446,7 +446,7 @@ Both on = all, only one on = just those (not applied in Album view)"));
         };
         if nav {
             let (r, _) = tree_row(ui, 0.0, "/".to_string(), in_view && cur.is_none(), None, "nav_root");
-            let r = r.on_hover_text(tr("앨범 뷰의 맨 위 (맨 위 앨범들, 그 뒤에 어느 앨범에도 없는 그림)\n앨범을 여기 끌어다 놓으면 맨 위로 · 오른쪽 클릭: 새 앨범", "Top of Album view (top-level albums, then pictures in no album)\nDrop an album here to move it to the top · right-click: new album"));
+            let r = r.on_hover_text(tr("앨범 뷰의 맨 위 (맨 위 앨범들, 그 뒤에 맨 위에 있는 그림)\n앨범을 여기 끌어다 놓으면 맨 위로 · 오른쪽 클릭: 새 앨범", "Top of Album view (top-level albums, then the pictures at the top)\nDrop an album here to move it to the top · right-click: new album"));
             self.mark("nav_root", r.rect);
             self.album_drop.push((Some(0), r.rect.intersect(ui.clip_rect())));
             if r.clicked() {
@@ -462,7 +462,7 @@ Both on = all, only one on = just those (not applied in Album view)"));
         // 검색 뷰 only: 무소속 (in the 앨범 뷰 those pictures sit at the top, after the albums)
         if !nav {
             let (r, _) = tree_row(ui, base, trf!("무소속 {}", "No album {}", self.unfiled_kind_n), is_on("none"), None, "album_none");
-            let r = r.on_hover_text(tr("어느 앨범에도 없는 그림\n클릭: 검색에 더하기·빼기 (AND·OR 대로) / Ctrl+클릭: 앨범은 이것만\n그림을 여기 끌어다 놓으면 모든 앨범에서 빠짐", "Pictures in no album\nClick: add to / take out of the search (AND or OR) / Ctrl+click: only this album\nDrop pictures here to remove them from all albums"));
+            let r = r.on_hover_text(tr("맨 위에만 있고 다른 앨범에는 없는 그림\n클릭: 검색에 더하기·빼기 (AND·OR 대로) / Ctrl+클릭: 앨범은 이것만\n그림을 여기 끌어다 놓으면 다른 앨범에서 모두 빠지고 맨 위에만 남음", "Pictures only at the top, in no other album\nClick: add to / take out of the search (AND or OR) / Ctrl+click: only this album\nDrop pictures here to take them out of every other album (only at the top)"));
             self.mark("album_none", r.rect);
             self.album_drop.push((None, r.rect.intersect(ui.clip_rect())));
             if r.clicked() {
@@ -837,9 +837,7 @@ Right-click: empty Trash"));
             let mut open_top = false;
             ui.horizontal_wrapped(|ui| {
                 ui.label(egui::RichText::new(tr("앨범", "Album")).color(DIM));
-                if im.albums.is_empty() {
-                    ui.label(egui::RichText::new(tr("없음 (맨 위)", "none (top)")).color(DIM));
-                } else if im.albums.contains(&0) && ui.small_button(tr("/ (맨 위)", "/ (top)")).on_hover_text(tr("앨범 뷰의 맨 위 열기", "Open the album view's top")).clicked() {
+                if im.albums.contains(&0) && ui.small_button(tr("/ (맨 위)", "/ (top)")).on_hover_text(tr("앨범 뷰의 맨 위 열기", "Open the album view's top")).clicked() {
                     open_top = true;
                 }
                 for a in &im.albums {

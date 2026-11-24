@@ -83,8 +83,7 @@ impl App {
         if !lead.is_empty() {
             let mut newest: HashMap<Option<u32>, (i64, String)> = HashMap::new();
             for im in self.db.images.iter().filter(|i| !i.missing && !i.trash) {
-                let keys: Vec<Option<u32>> = if im.albums.is_empty() { vec![None] } else { im.albums.iter().map(|&a| Some(a)).collect() };
-                for k in keys {
+                for k in im.albums.iter().map(|&a| Some(a)) {
                     let e = newest.entry(k).or_insert((i64::MIN, String::new()));
                     if im.added > e.0 {
                         *e = (im.added, im.id.clone());

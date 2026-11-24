@@ -243,7 +243,8 @@ pub struct App {
     /// album the running import's pictures go into (Some(None) = none: nothing to do)
     import_album: Option<Option<u32>>,
     /// (picture id, album) waiting for the picture's record (imported, not scanned yet)
-    pending_album: Vec<(String, u32)>,
+    /// (picture, album, new file): a new file goes only there, a known one keeps its albums
+    pending_album: Vec<(String, u32, bool)>,
     export_rx: Option<Receiver<ExportMsg>>,
     export_progress: Option<(usize, usize)>,
     export_tag: String,
@@ -613,6 +614,11 @@ impl App {
             if n > 0 {
                 app.notice(trf!("프리셋 {n}개를 앨범 '프리셋' 아래 같은 이름의 앨범으로 옮겼습니다", "Moved {n} presets into same-named albums under the album '프리셋'"), false);
             }
+            app.dirty = true;
+            app.counts_dirty = true;
+        }
+        if !app.db.read_only && app.db.put_unplaced_at_top() > 0 {
+            // records of v0.29 and before: "in no album" was an empty list, now album 0 (the top)
             app.dirty = true;
             app.counts_dirty = true;
         }
@@ -1207,8 +1213,8 @@ impl App {
             }
             if let Some(Some(a)) = self.import_album.take() {
                 // new pictures get their record at the next scan: remember them till then
-                let ids: Vec<String> = r.added.iter().map(|x| x.1.clone()).chain(r.dup_ids.iter().cloned()).collect();
-                self.pending_album.extend(ids.into_iter().map(|id| (id, a)));
+                let ids: Vec<(String, bool)> = r.added.iter().map(|x| (x.1.clone(), true)).chain(r.dup_ids.iter().map(|d| (d.clone(), false))).collect();
+                self.pending_album.extend(ids.into_iter().map(|(id, fresh)| (id, a, fresh)));
                 self.apply_pending_album();
             }
             if r.copied > 0 {
@@ -1362,8 +1368,8 @@ impl App {
             let im = &mut self.db.images[i];
             step.items.push(UndoItem { id: im.id.clone(), score: im.score, tags: im.tags.clone(), trash: im.trash, preset: im.preset.clone(), preset_set: im.preset_set, albums: im.albums.clone() });
             f(im);
-            if im.albums.iter().all(|&a| a == 0) {
-                im.albums.clear();
+            if im.albums.is_empty() {
+                im.albums.push(0);
             }
         }
         if !step.items.is_empty() {
@@ -1514,17 +1520,21 @@ impl App {
         }
         let mut left = Vec::new();
         let mut n = 0;
-        for (id, a) in std::mem::take(&mut self.pending_album) {
+        for (id, a, fresh) in std::mem::take(&mut self.pending_album) {
             match self.id_index.get(&id).copied() {
                 Some(i) => {
                     let alive = self.db.album(a).is_some();
                     let im = &mut self.db.images[i];
                     if alive && !im.albums.contains(&a) {
+                        // a new file got album 0 (the top) with its record: it was put in `a` instead
+                        if fresh && im.albums == [0] {
+                            im.albums.clear();
+                        }
                         im.albums.push(a);
                         n += 1;
                     }
                 }
-                None => left.push((id, a)),
+                None => left.push((id, a, fresh)),
             }
         }
         // a picture whose file never got a record (copy failed...) is dropped after a while
@@ -1757,7 +1767,8 @@ impl App {
         }
     }
 
-    /// Put pictures into an album (`None` = 앨범 없음: take them out of every album).
+    /// Put pictures into an album, keeping the albums they are in (`None`: take them out
+    /// of every album, so they are only at the top).
     fn add_to_album(&mut self, ids: &[String], to: Option<u32>) {
         if ids.is_empty() {
             return;
@@ -1765,27 +1776,20 @@ impl App {
         let name = self.album_label(to);
         let n = match to {
             Some(a) => {
-                // a picture in no album already sits at the top
-                let todo: Vec<String> = ids.iter().filter(|id| self.img(id).is_some_and(|i| !i.albums.contains(&a) && !(a == 0 && i.albums.is_empty()))).cloned().collect();
-                self.edit(&todo, &trf!("앨범 '{name}'에 넣기", "Add to album '{name}'"), |im| {
-                    // a copy: a picture in no album sits at the top, and stays there too
-                    if im.albums.is_empty() && a != 0 {
-                        im.albums.push(0);
-                    }
-                    im.albums.push(a);
-                });
+                let todo: Vec<String> = ids.iter().filter(|id| self.img(id).is_some_and(|i| !i.albums.contains(&a))).cloned().collect();
+                self.edit(&todo, &trf!("앨범 '{name}'에 넣기", "Add to album '{name}'"), |im| im.albums.push(a));
                 todo.len()
             }
             None => {
-                let todo: Vec<String> = ids.iter().filter(|id| self.img(id).is_some_and(|i| !i.albums.is_empty())).cloned().collect();
-                self.edit(&todo, tr("앨범에서 빼기", "Remove from album"), |im| im.albums.clear());
+                let todo: Vec<String> = ids.iter().filter(|id| self.img(id).is_some_and(|i| i.albums.iter().any(|&a| a != 0))).cloned().collect();
+                self.edit(&todo, tr("맨 위에만 두기", "Only at the top"), |im| im.albums.clear());
                 todo.len()
             }
         };
         let msg = match to {
             Some(_) if n < ids.len() => trf!("{n}장을 '{name}'에 넣음 ({}장은 이미 있음)", "Added {n} pictures to '{name}' ({} already there)", ids.len() - n),
             Some(_) => trf!("{n}장을 '{name}'에 넣음 (Ctrl+Z 되돌리기)", "Added {n} pictures to '{name}' (Ctrl+Z to undo)"),
-            None => trf!("{n}장을 모든 앨범에서 뺌 (Ctrl+Z 되돌리기)", "Removed {n} pictures from all albums (Ctrl+Z to undo)"),
+            None => trf!("{n}장을 다른 앨범에서 모두 빼고 맨 위에만 둠 (Ctrl+Z 되돌리기)", "Took {n} pictures out of every other album, so they are only at the top (Ctrl+Z to undo)"),
         };
         self.notice(msg, false);
         self.refilter(true);
@@ -1972,7 +1976,6 @@ impl App {
     }
 
     fn take_out_here(&mut self, ids: &[String], x: u32) {
-        // x = 0 (the top): a picture in no album is only there too
         let only_here = |i: &Img| i.albums.iter().all(|&a| a == x);
         let last = ids.iter().filter(|id| self.img(id).is_some_and(|i| only_here(i))).count();
         let n = ids.len();
@@ -2673,10 +2676,10 @@ preset:photoB        파일 이름 g_photoB_… 의 프리셋
 ckpt:obsess       체크포인트 이름에 들어간 글자      lora:pastel
 seed:12345        같은 시드 (체크포인트·프리셋 비교)
 folder:00001      name:003640
-album:여행  album:none   여행 앨범에 바로 든 그림 / 무소속(어느 앨범에도 없는 그림)
+album:여행  album:none   여행 앨범에 바로 든 그림 / 무소속(맨 위에만 있는 그림)
 album:여행+         여행과 그 하위 앨범들의 그림 (왼쪽 앨범을 누르면 넣어 줌)
 album:여행/바다      이름이 같은 앨범이 또 있으면 경로로   \"album:내 앨범\"  띄어쓰기는 따옴표
-album:top          앨범 뷰의 맨 위 (맨 위 앨범들, 맨 위에 둔 그림, 무소속 그림)
+album:top          앨범 뷰의 맨 위 (맨 위 앨범들, 그다음 맨 위에 있는 그림)
 is:trash  is:unscored  is:scored  is:tagged  is:untagged  is:missing
 added:today  added:yesterday  added:3d(최근 3일)  added:11-15  added>=2026-11-01   (imgr에 넣은 날)
 date:today  date<11-10 …                                                      (파일 시각 = 만든 날)
@@ -2720,10 +2723,10 @@ preset:photoB        preset of files named g_photoB_...
 ckpt:obsess       text contained in the checkpoint name      lora:pastel
 seed:12345        same seed (compare checkpoints / presets)
 folder:00001      name:003640
-album:trip  album:none   pictures directly in album trip / in no album at all
+album:trip  album:none   pictures directly in album trip / only at the top (in no other album)
 album:trip+         pictures of trip and its sub-albums (clicking an album on the left puts this in)
 album:trip/sea      with the path, if another album has the same name   \"album:my trip\"  quote names with spaces
-album:top          top of the Album view (top-level albums, pictures put at the top, pictures in no album)
+album:top          top of the Album view (top-level albums, then the pictures at the top)
 is:trash  is:unscored  is:scored  is:tagged  is:untagged  is:missing
 added:today  added:yesterday  added:3d (last 3 days)  added:11-15  added>=2026-11-01   (day added to imgr)
 date:today  date<11-10 ...                                                      (file time = day created)

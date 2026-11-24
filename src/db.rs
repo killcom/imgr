@@ -398,6 +398,7 @@ impl Db {
                     size: it.size,
                     mtime: it.mtime,
                     added: now,
+                    albums: vec![0],
                     ..Default::default()
                 };
                 r.preset = preset_of(r.name());
@@ -431,7 +432,7 @@ impl Db {
         let plain: HashSet<String> = self
             .images
             .iter()
-            .filter(|r| r.missing && r.score == 0 && r.tags.is_empty() && r.albums.is_empty() && !r.trash && !r.preset_set)
+            .filter(|r| r.missing && r.score == 0 && r.tags.is_empty() && r.albums.iter().all(|&a| a == 0) && !r.trash && !r.preset_set)
             .map(|r| r.id.clone())
             .collect();
         if !plain.is_empty() {
@@ -543,10 +544,21 @@ impl Db {
             let before = im.albums.len();
             im.albums.retain(|&a| a != id);
             n += (before != im.albums.len()) as usize;
-            // only the top left (album 0): simply in no album
-            if im.albums.iter().all(|&a| a == 0) {
-                im.albums.clear();
+            if im.albums.is_empty() {
+                im.albums.push(0);
             }
+        }
+        n
+    }
+
+    /// The album view's top (/) is album 0, an album like the others: a picture that is in
+    /// no other album is in album 0. Records of older versions kept that as an empty list;
+    /// they get the 0 here, once. Returns how many.
+    pub fn put_unplaced_at_top(&mut self) -> usize {
+        let mut n = 0;
+        for im in self.images.iter_mut().filter(|i| i.albums.is_empty()) {
+            im.albums.push(0);
+            n += 1;
         }
         n
     }
@@ -1539,6 +1551,15 @@ mod tests {
         // a picture only in an album is not "plain": it stays as missing
         db.images[0].missing = true;
         assert_eq!(db.forget_plain_missing(), 0);
+        // the top (/) is album 0: deleting a picture's last album leaves it there
+        db.images[0].missing = false;
+        assert_eq!(db.delete_album(b), 1);
+        assert_eq!(db.images[0].albums, vec![0]);
+        // records of older versions: an empty list becomes album 0, once
+        db.images.push(Img { id: "p2".into(), ..Default::default() });
+        assert_eq!(db.put_unplaced_at_top(), 1);
+        assert_eq!(db.images[1].albums, vec![0]);
+        assert_eq!(db.put_unplaced_at_top(), 0);
     }
 
     #[test]

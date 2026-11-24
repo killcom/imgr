@@ -1,5 +1,9 @@
 # 바뀐 것 / Changes
 
+## v0.30
+- 앨범 뷰의 맨 위(/)를 다른 앨범과 똑같이 저장 (앨범 0): 새 그림은 맨 위에 들어가고, 복사·옮기기·Del·오른쪽 클릭 → 앨범이 맨 위에서도 다른 앨범과 같은 규칙. 예전 기록은 처음 켤 때 한 번 바뀜 (예전 판으로 열어도 같게 보임) — the album view's top (/) is stored like any album (album 0): new pictures go there, and copy / move / Del / right-click → Album follow the same rules there as in any album. Older records are converted once at start (older versions still show them the same)
+- 그림 오른쪽 클릭의 '모든 앨범에서 빼기' → '맨 위에만 두기' — 'Remove from all albums' in the picture menu is now 'Only at the top'
+
 ## v0.29
 - 검색칸에 치는 동안 마지막 말은 그 글자로 시작하는 태그·해시태그도 보임 (so → solo), Enter = 정확히 — while typing, the last word also matches tags / hashtags starting with it; Enter = exactly
 - OR 모드면 콤마로 나눈 태그·해시태그는 하나라도 맞으면 됨 (필터와 - 조건은 그대로 좁힘) — in OR mode comma-separated tags and hashtags match if any one does (filters and - conditions still narrow)
