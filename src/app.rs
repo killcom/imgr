@@ -26,7 +26,7 @@ use crate::i18n::tr;
 use crate::db::{self, Db, Img};
 use crate::ops;
 use crate::query::{self, Query, Sort};
-use crate::settings::Settings;
+use crate::settings::{CmpRow, Settings};
 use crate::thumbs::{self, Kind, Loader};
 use crate::winshell;
 
@@ -46,6 +46,32 @@ const TAG_BG: Color32 = Color32::from_rgb(44, 52, 66);
 const MAX_THUMBS: usize = 900;
 const MAX_BIGS: usize = 10;
 const BIG_PX: u32 = 2400;
+/// 비교열 limits (kept in settings.json): rows, pictures per row
+const CMP_MAX_ROWS: usize = 50;
+const CMP_MAX_PER_ROW: usize = 300;
+
+/// 비교열 row buttons
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub(super) enum CmpOp {
+    Remove,
+    Up,
+    Down,
+    Top,
+    Bottom,
+}
+
+/// Sort picture indexes the way the grid does.
+fn sort_indices(im: &[Img], v: &mut [usize], sort: Sort, rand_seed: u64) {
+    match sort {
+        Sort::New => v.sort_by(|&a, &b| (im[b].added, im[b].mtime, &im[b].path).cmp(&(im[a].added, im[a].mtime, &im[a].path))),
+        Sort::Old => v.sort_by(|&a, &b| (im[a].added, im[a].mtime, &im[a].path).cmp(&(im[b].added, im[b].mtime, &im[b].path))),
+        Sort::Name => v.sort_by(|&a, &b| im[a].name().to_lowercase().cmp(&im[b].name().to_lowercase())),
+        Sort::Score => v.sort_by(|&a, &b| im[b].score.cmp(&im[a].score).then(im[b].mtime.cmp(&im[a].mtime))),
+        Sort::Seed => v.sort_by(|&a, &b| (im[a].seed, &im[a].preset, im[a].name()).cmp(&(im[b].seed, &im[b].preset, im[b].name()))),
+        Sort::Size => v.sort_by(|&a, &b| im[b].size.cmp(&im[a].size)),
+        Sort::Random => v.sort_by_key(|&a| mix(&im[a].id, rand_seed)),
+    }
+}
 const PREVIEW_PX: u32 = 1100;
 const RESCAN_EVERY: Duration = Duration::from_secs(45);
 const WATCH_EVERY: Duration = Duration::from_secs(60);
@@ -160,9 +186,11 @@ struct UndoItem {
 struct UndoStep {
     label: String,
     items: Vec<UndoItem>,
+    /// a 비교열 change: the rows and cursor before it
+    cmp: Option<(Vec<CmpRow>, (usize, usize))>,
 }
 
-#[derive(Default)]
+#[derive(Default, Clone, Copy)]
 struct ZoomPan {
     /// 1.0 = fit
     zoom: f32,
@@ -218,8 +246,19 @@ pub struct App {
     view: View,
     /// where Esc goes back to from the viewer
     back_view: View,
-    cmp_ids: Vec<String>,
-    cmp_focus: usize,
+    /// where Esc / C goes from the 비교열 (kept apart, so the viewer opened from it comes back to it)
+    cmp_back: View,
+    /// 비교열 cursor: (row, picture in the row as shown)
+    cmp_focus: (usize, usize),
+    /// bring the 비교열 cursor into view on the next frame
+    cmp_scroll: bool,
+    /// the column ↑↓ aim for (kept while passing a shorter row)
+    cmp_want: usize,
+    /// zoom of the 비교열, kept while a picture of it is open big
+    cmp_zp: ZoomPan,
+    /// counts 비교열 changes (the screen's cache key)
+    cmp_gen: u64,
+    cmp_cache: Option<views::CmpCache>,
     zp: ZoomPan,
     loader: Loader,
     tex: HashMap<(String, Kind), Slot>,
@@ -495,8 +534,13 @@ impl App {
             anchor: None,
             view: View::Grid,
             back_view: View::Grid,
-            cmp_ids: Vec::new(),
-            cmp_focus: 0,
+            cmp_back: View::Grid,
+            cmp_focus: (0, 0),
+            cmp_scroll: false,
+            cmp_want: 0,
+            cmp_zp: ZoomPan::default(),
+            cmp_gen: 0,
+            cmp_cache: None,
             zp: ZoomPan { zoom: 1.0, center: vec2(0.5, 0.5), actual: false },
             loader,
             tex: HashMap::new(),
@@ -654,12 +698,10 @@ impl App {
     /// In compare view: only the focused cell.
     fn selected_ids(&self) -> Vec<String> {
         if self.view == View::Compare {
-            if let Some(id) = self.cmp_ids.get(self.cmp_focus) {
-                return vec![id.clone()];
-            }
+            return self.cmp_focus_id().into_iter().collect();
         }
         if self.view == View::Viewer {
-            return self.focus_img().map(|im| vec![im.id.clone()]).unwrap_or_default();
+            return self.viewer_img().map(|im| vec![im.id.clone()]).unwrap_or_default();
         }
         let mut v: Vec<String> = Vec::new();
         if !self.sel.is_empty() {
@@ -761,18 +803,7 @@ impl App {
         let mut v: Vec<usize> =
             (0..self.db.images.len()).filter(|&i| q.matches(&self.db.images[i]) && (!kind_on || self.db.images[i].has_workflow() == wf)).collect();
         let im = &self.db.images;
-        match sort {
-            Sort::New => v.sort_by(|&a, &b| (im[b].added, im[b].mtime, &im[b].path).cmp(&(im[a].added, im[a].mtime, &im[a].path))),
-            Sort::Old => v.sort_by(|&a, &b| (im[a].added, im[a].mtime, &im[a].path).cmp(&(im[b].added, im[b].mtime, &im[b].path))),
-            Sort::Name => v.sort_by(|&a, &b| im[a].name().to_lowercase().cmp(&im[b].name().to_lowercase())),
-            Sort::Score => v.sort_by(|&a, &b| im[b].score.cmp(&im[a].score).then(im[b].mtime.cmp(&im[a].mtime))),
-            Sort::Seed => v.sort_by(|&a, &b| (im[a].seed, &im[a].preset, im[a].name()).cmp(&(im[b].seed, &im[b].preset, im[b].name()))),
-            Sort::Size => v.sort_by(|&a, &b| im[b].size.cmp(&im[a].size)),
-            Sort::Random => {
-                let s = self.rand_seed;
-                v.sort_by_key(|&a| mix(&im[a].id, s));
-            }
-        }
+        sort_indices(im, &mut v, sort, self.rand_seed);
         // usual width/height of the shown pictures (median of a sample) -> grid cell shape
         let mut ar: Vec<f32> = v.iter().take(400).map(|&i| &im[i]).filter(|x| x.w > 0 && x.h > 0).map(|x| x.w as f32 / x.h as f32).collect();
         if !ar.is_empty() {
@@ -816,7 +847,8 @@ impl App {
         self.refilter(false);
         self.settings.query = self.query_text.clone();
         if matches!(self.view, View::Viewer | View::Compare) {
-            self.view = if self.back_view == View::Albums { View::Albums } else { View::Grid };
+            let back = if self.view == View::Compare { self.cmp_back } else { self.back_view };
+            self.view = if back == View::Albums { View::Albums } else { View::Grid };
         }
     }
 
@@ -1362,7 +1394,7 @@ impl App {
 
     // ------------------------------------------------------------ editing
     fn edit<F: FnMut(&mut Img)>(&mut self, ids: &[String], label: &str, mut f: F) {
-        let mut step = UndoStep { label: label.to_string(), items: Vec::new() };
+        let mut step = UndoStep { label: label.to_string(), items: Vec::new(), cmp: None };
         let idx: Vec<usize> = ids.iter().filter_map(|id| self.id_index.get(id).copied()).collect();
         for i in idx {
             let im = &mut self.db.images[i];
@@ -1392,10 +1424,13 @@ impl App {
         self.notice(msg, false);
         // rating one by one in the big viewer: go on to the next picture
         if self.view == View::Viewer && self.settings.auto_advance && n > 0 && ids.len() == 1 {
-            if let Some(f) = self.focus {
-                if f + 1 < self.shown.len() {
-                    self.move_focus(1, false);
-                }
+            let next = if self.viewer_in_cmp() {
+                self.cmp_focus.1 + 1 < self.cmp_shown_row(self.cmp_focus.0).len()
+            } else {
+                self.focus.is_some_and(|f| f + 1 < self.shown.len())
+            };
+            if next {
+                self.move_focus(1, false);
             }
         }
     }
@@ -2067,9 +2102,9 @@ impl App {
         self.edit(&ids, if on { tr("휴지통으로", "To Trash") } else { tr("되살리기", "Restore") }, |im| im.trash = on);
         self.notice(trf!("{}장 {}", "{} pictures {}", ids.len(), if on { tr("imgr 휴지통으로 (Ctrl+Z 되돌리기)", "moved to the imgr Trash (Ctrl+Z to undo)") } else { tr("되살림", "restored") }), false);
         let next = self.focus;
-        if self.view == View::Compare {
-            self.cmp_ids.retain(|id| !ids.contains(id));
-            self.cmp_focus = self.cmp_focus.min(self.cmp_ids.len().saturating_sub(1));
+        if self.view == View::Compare || self.viewer_in_cmp() {
+            // trashed pictures are not shown in the 비교열; keep the cursor in its row
+            self.cmp_clamp_focus();
         }
         self.refilter(true);
         // the trashed pictures left the list: keep the cursor at the same place
@@ -2087,10 +2122,10 @@ impl App {
     /// Album moves / deletes / renames, filter deletes and imports are not undone by Ctrl+Z:
     /// a mark on the undo list says so, instead of Ctrl+Z quietly undoing an older edit.
     pub(super) fn undo_barrier(&mut self, label: &str) {
-        if self.undo.last().is_some_and(|s| s.items.is_empty() && s.label == label) {
+        if self.undo.last().is_some_and(|s| s.items.is_empty() && s.cmp.is_none() && s.label == label) {
             return;
         }
-        self.undo.push(UndoStep { label: label.to_string(), items: Vec::new() });
+        self.undo.push(UndoStep { label: label.to_string(), items: Vec::new(), cmp: None });
         if self.undo.len() > 200 {
             self.undo.remove(0);
         }
@@ -2101,6 +2136,15 @@ impl App {
             self.notice(tr("되돌릴 것이 없습니다", "Nothing to undo"), false);
             return;
         };
+        if let Some((rows, focus)) = step.cmp {
+            self.settings.cmp_rows = rows;
+            self.cmp_focus = focus;
+            self.cmp_changed();
+            self.cmp_clamp_focus();
+            self.cmp_scroll = true;
+            self.notice(trf!("되돌림: {}", "Undone: {}", step.label), false);
+            return;
+        }
         if step.items.is_empty() {
             self.notice(trf!("'{}'은(는) Ctrl+Z로 되돌릴 수 없습니다 (그 앞의 것은 Ctrl+Z 한 번 더)", "'{}' cannot be undone with Ctrl+Z (press Ctrl+Z again for the step before it)", step.label), true);
             return;
@@ -2294,6 +2338,17 @@ impl App {
     }
 
     fn move_focus(&mut self, delta: isize, shift: bool) {
+        if self.viewer_in_cmp() {
+            // a picture of the 비교열 open big: ←/→ walk its row
+            let n = self.cmp_shown_row(self.cmp_focus.0).len();
+            let c = (self.cmp_focus.1 as isize).saturating_add(delta).clamp(0, n.saturating_sub(1) as isize) as usize;
+            self.cmp_focus.1 = c;
+            self.cmp_want = c;
+            if !self.zp.actual {
+                self.zp.reset();
+            }
+            return;
+        }
         if self.view == View::Albums {
             return self.move_cell(delta, shift);
         }
@@ -2352,37 +2407,283 @@ impl App {
         }
     }
 
-    fn open_compare_ids(&mut self, ids: Vec<String>) {
-        if ids.len() < 2 {
-            self.notice(tr("비교하려면 2장 이상 고르세요 (Ctrl/Shift+클릭 또는 빈 곳에서 끌기)", "Select 2 or more pictures to compare (Ctrl/Shift+click or drag on empty space)"), true);
-            return;
-        }
-        if ids.len() > 12 {
-            self.notice(trf!("{}장 중 앞의 12장만 비교합니다", "Comparing only the first 12 of {} pictures", ids.len()), false);
-        }
-        if self.view != View::Compare {
-            self.back_view = self.view;
-        }
-        self.cmp_ids = ids.into_iter().take(12).collect();
-        self.cmp_focus = 0;
-        self.zp.reset();
-        self.view = View::Compare;
+    // ------------------------------------------------------------ 비교열
+    /// A 비교열 row as shown: pictures in the imgr Trash or gone from imgs are left out.
+    pub(super) fn cmp_shown_row(&self, r: usize) -> Vec<String> {
+        self.settings.cmp_rows.get(r).map(|row| row.ids.iter().filter(|id| self.img(id).is_some_and(|i| !i.trash && !i.missing)).cloned().collect()).unwrap_or_default()
     }
 
-    fn open_compare(&mut self) {
-        if self.view == View::Compare {
+    /// The picture under the 비교열 cursor.
+    pub(super) fn cmp_focus_id(&self) -> Option<String> {
+        let (r, c) = self.cmp_focus;
+        self.cmp_shown_row(r).get(c).cloned()
+    }
+
+    fn cmp_clamp_focus(&mut self) {
+        let rows = self.settings.cmp_rows.len();
+        let r = self.cmp_focus.0.min(rows.saturating_sub(1));
+        let n = self.cmp_shown_row(r).len();
+        self.cmp_focus = (r, self.cmp_focus.1.min(n.saturating_sub(1)));
+    }
+
+    /// Move the 비교열 cursor (←→ in the row, ↑↓ between rows).
+    fn cmp_move(&mut self, dr: isize, dc: isize) {
+        let rows = self.settings.cmp_rows.len();
+        if rows == 0 {
             return;
         }
-        let ids = self.selected_ids();
-        self.open_compare_ids(ids);
+        let r = (self.cmp_focus.0 as isize).saturating_add(dr).clamp(0, rows as isize - 1) as usize;
+        let n = self.cmp_shown_row(r).len();
+        let c = if dc != 0 {
+            let c = (self.cmp_focus.1 as isize).saturating_add(dc).clamp(0, n.saturating_sub(1) as isize) as usize;
+            self.cmp_want = c;
+            c
+        } else {
+            self.cmp_want.min(n.saturating_sub(1))
+        };
+        self.cmp_focus = (r, c);
+        self.cmp_scroll = true;
+    }
+
+    /// Pictures of an album and its sub albums, in the current sort (one 비교열 row).
+    fn cmp_album_row(&self, id: u32) -> CmpRow {
+        let sub = self.db.album_subtree(id);
+        let im = &self.db.images;
+        let mut v: Vec<usize> = (0..im.len()).filter(|&i| !im[i].trash && !im[i].missing && im[i].albums.iter().any(|a| sub.contains(a))).collect();
+        sort_indices(im, &mut v, self.sort, self.rand_seed);
+        CmpRow { label: self.db.album_path(id), ids: v.into_iter().map(|i| im[i].id.clone()).collect() }
+    }
+
+    /// Add rows to the 비교열 (`clear`: empty it first). Each row = what was added at once.
+    fn cmp_add(&mut self, rows: Vec<CmpRow>, clear: bool) {
+        // what would be added, before anything is touched
+        let mut new: Vec<CmpRow> = Vec::new();
+        let (mut cut, mut full, mut same) = (0, 0, 0);
+        let room = CMP_MAX_ROWS - if clear { 0 } else { self.settings.cmp_rows.len().min(CMP_MAX_ROWS) };
+        for mut row in rows {
+            let mut seen = HashSet::new();
+            row.ids.retain(|id| seen.insert(id.clone()));
+            if row.ids.is_empty() {
+                continue;
+            }
+            if row.ids.len() > CMP_MAX_PER_ROW {
+                cut += row.ids.len() - CMP_MAX_PER_ROW;
+                row.ids.truncate(CMP_MAX_PER_ROW);
+            }
+            // the very same pictures already make a row: not twice
+            if new.iter().any(|r| r.ids == row.ids) || (!clear && self.settings.cmp_rows.iter().any(|r| r.ids == row.ids)) {
+                same += 1;
+                continue;
+            }
+            if new.len() >= room {
+                full += 1;
+                continue;
+            }
+            new.push(row);
+        }
+        let added = new.len();
+        if added == 0 {
+            let msg = if same > 0 {
+                tr("같은 그림들의 줄이 이미 비교열에 있습니다 (그대로 둠)", "A row of the same pictures is already there (nothing changed)")
+            } else if full > 0 {
+                tr("비교열이 꽉 찼습니다 (50줄). 줄 왼쪽 ✕ 로 지우고 넣으세요", "The compare rows are full (50). Remove some with ✕ left of a row first")
+            } else {
+                tr("비교열에 넣을 그림이 없습니다 (그대로 둠)", "Nothing to add to the compare rows (nothing changed)")
+            };
+            self.notice(msg, true);
+            return;
+        }
+        self.cmp_snapshot(if clear { tr("비교열 비우고 추가", "Clear compare rows and add") } else { tr("비교열에 추가", "Add to compare rows") });
+        if clear {
+            self.settings.cmp_rows.clear();
+        }
+        let first = self.settings.cmp_rows.len();
+        self.settings.cmp_rows.extend(new);
+        // the cursor goes to the first new row, so opening the screen shows it
+        self.cmp_focus = (first, 0);
+        self.cmp_want = 0;
+        self.cmp_scroll = true;
+        self.cmp_changed();
+        let total = self.settings.cmp_rows.len();
+        let mut msg = trf!("비교열에 {added}줄 넣음 (모두 {total}줄) — 보기: 위의 [비교열] 또는 C", "Added {added} rows to the compare rows ({total} in all) — view: [Compare rows] at the top or C");
+        if same > 0 {
+            msg.push_str(&trf!(" · 이미 있는 같은 줄 {same}개는 뺌", " · {same} rows already there left out"));
+        }
+        if cut > 0 {
+            msg.push_str(&trf!(" · 한 줄은 {CMP_MAX_PER_ROW}장까지라 {cut}장은 뺌", " · a row holds up to {CMP_MAX_PER_ROW} pictures, {cut} left out"));
+        }
+        if full > 0 {
+            msg.push_str(&trf!(" · {CMP_MAX_ROWS}줄이 꽉 차서 {full}줄은 못 넣음 (줄 왼쪽 ✕ 로 지우기)", " · {CMP_MAX_ROWS} rows is the limit, {full} not added (✕ left of a row removes it)"));
+        }
+        self.notice(msg, full > 0);
+    }
+
+    /// Remember the rows before a change Ctrl+Z can take back (at most 20 such steps kept).
+    fn cmp_snapshot(&mut self, label: &str) {
+        self.undo.push(UndoStep { label: label.to_string(), items: Vec::new(), cmp: Some((self.settings.cmp_rows.clone(), self.cmp_focus)) });
+        let kept = self.undo.iter().filter(|s| s.cmp.is_some()).count();
+        if kept > 20 {
+            if let Some(i) = self.undo.iter().position(|s| s.cmp.is_some()) {
+                self.undo.remove(i);
+            }
+        }
+        if self.undo.len() > 200 {
+            self.undo.remove(0);
+        }
+    }
+
+    /// After any change of the rows: saved with the settings, the screen recomputes.
+    fn cmp_changed(&mut self) {
+        self.cmp_gen += 1;
+        self.dirty = true;
+    }
+
+    /// '모두 비우기' (Ctrl+Z brings them back).
+    pub(super) fn cmp_clear_all(&mut self) {
+        if self.settings.cmp_rows.is_empty() {
+            return;
+        }
+        self.cmp_snapshot(tr("비교열 모두 비우기", "Clear all compare rows"));
+        let n = self.settings.cmp_rows.len();
+        self.settings.cmp_rows.clear();
+        self.cmp_focus = (0, 0);
+        self.cmp_changed();
+        self.notice(trf!("비교열 {n}줄을 모두 비움 (Ctrl+Z 되돌리기)", "Cleared all {n} compare rows (Ctrl+Z to undo)"), false);
+    }
+
+    /// A picture of the 비교열 big (Enter, Space, double-click): ←/→ walk its row, Esc comes back.
+    pub(super) fn cmp_open_viewer(&mut self) {
+        if self.cmp_focus_id().is_none() {
+            return;
+        }
+        self.cmp_zp = self.zp;
+        self.back_view = View::Compare;
+        self.zp.reset();
+        self.view = View::Viewer;
+    }
+
+    /// The big viewer shows a 비교열 picture (it was opened from there).
+    pub(super) fn viewer_in_cmp(&self) -> bool {
+        self.view == View::Viewer && self.back_view == View::Compare
+    }
+
+    /// The picture the big viewer shows.
+    pub(super) fn viewer_img(&self) -> Option<&Img> {
+        if self.viewer_in_cmp() {
+            return self.cmp_focus_id().and_then(|id| self.img(&id));
+        }
+        self.focus_img()
+    }
+
+    /// The selection as 비교열 rows: the picked pictures as one row, each picked album as its own row.
+    fn cmp_add_selected(&mut self, clear: bool) {
+        let ids = self.picked_pictures();
+        let mut rows = Vec::new();
+        if !ids.is_empty() {
+            let label = match self.cur_album() {
+                Some(Some(a)) => self.db.album_path(a),
+                None if self.view == View::Albums => tr("/ (맨 위)", "/ (top)").to_string(),
+                _ if !self.query_text.trim().is_empty() => self.query_text.trim().chars().take(60).collect(),
+                _ => tr("고른 그림", "Picked pictures").to_string(),
+            };
+            rows.push(CmpRow { label, ids });
+        }
+        // album cells can be picked only in the album view (a pick left from there does not count)
+        let mut albums: Vec<u32> = if self.view == View::Albums { self.album_sel.iter().copied().collect() } else { Vec::new() };
+        albums.sort_unstable();
+        for a in albums {
+            rows.push(self.cmp_album_row(a));
+        }
+        self.cmp_add(rows, clear);
+    }
+
+    /// [비교열] / C: open the 비교열 screen, or go back from it.
+    fn toggle_cmp(&mut self) {
+        if self.view == View::Compare || self.viewer_in_cmp() {
+            self.go_back();
+            return;
+        }
+        self.cmp_back = match self.view {
+            // from the viewer: where the viewer itself goes back to
+            View::Viewer if matches!(self.back_view, View::Albums | View::Matrix) => self.back_view,
+            View::Viewer => View::Grid,
+            v => v,
+        };
+        self.view = View::Compare;
+        self.zp.reset();
+        self.cmp_clamp_focus();
+        self.cmp_scroll = true;
+    }
+
+    /// A row button: remove it or move it.
+    pub(super) fn cmp_row_op(&mut self, r: usize, op: CmpOp) {
+        let n = self.settings.cmp_rows.len();
+        if r >= n {
+            return;
+        }
+        let to = match op {
+            CmpOp::Remove => {
+                self.cmp_snapshot(tr("비교열 줄 지우기", "Remove compare row"));
+                self.settings.cmp_rows.remove(r);
+                if self.cmp_focus.0 > r {
+                    self.cmp_focus.0 -= 1;
+                }
+                self.cmp_clamp_focus();
+                self.cmp_changed();
+                self.notice(trf!("비교열 {}번째 줄을 지움 (Ctrl+Z 되돌리기)", "Removed compare row {} (Ctrl+Z to undo)", r + 1), false);
+                return;
+            }
+            CmpOp::Up => r.saturating_sub(1),
+            CmpOp::Down => (r + 1).min(n - 1),
+            CmpOp::Top => 0,
+            CmpOp::Bottom => n - 1,
+        };
+        let row = self.settings.cmp_rows.remove(r);
+        self.settings.cmp_rows.insert(to, row);
+        // the cursor goes with its row
+        let f = self.cmp_focus.0;
+        self.cmp_focus.0 = if f == r {
+            to
+        } else if r < f && to >= f {
+            f - 1
+        } else if r > f && to <= f {
+            f + 1
+        } else {
+            f
+        };
+        self.cmp_scroll = true;
+        self.cmp_changed();
+    }
+
+    /// Right-click in the 비교열 → take the picture out of its row (the last one: the row goes).
+    pub(super) fn cmp_take_out_focused(&mut self) {
+        let Some(id) = self.cmp_focus_id() else { return };
+        self.cmp_snapshot(tr("비교열 줄에서 빼기", "Take out of compare row"));
+        let r = self.cmp_focus.0;
+        if let Some(row) = self.settings.cmp_rows.get_mut(r) {
+            row.ids.retain(|x| *x != id);
+            if row.ids.is_empty() {
+                self.settings.cmp_rows.remove(r);
+            }
+        }
+        self.cmp_clamp_focus();
+        self.cmp_changed();
+        self.notice(tr("비교열 줄에서 뺌 (Ctrl+Z 되돌리기)", "Taken out of the compare row (Ctrl+Z to undo)"), false);
     }
 
     fn go_back(&mut self) {
         let to = match self.view {
-            View::Viewer | View::Compare => self.back_view,
+            View::Viewer => self.back_view,
+            View::Compare => self.cmp_back,
             _ => View::Grid,
         };
-        self.view = if to == View::Viewer || to == View::Compare { View::Grid } else { to };
+        // the viewer opened from the 비교열 goes back to it, with its zoom
+        self.view = if to == View::Viewer || (to == View::Compare && self.view == View::Compare) { View::Grid } else { to };
+        if self.view == View::Compare {
+            self.zp = self.cmp_zp;
+            self.cmp_clamp_focus();
+            self.cmp_scroll = true;
+        }
         if matches!(self.view, View::Grid | View::Albums) {
             if let Some(f) = self.focus {
                 self.scroll_to = Some(f);
@@ -2498,16 +2799,24 @@ impl App {
                 };
                 self.matrix_move(dr, dc);
             }
+            Key::ArrowDown | Key::ArrowUp if self.view == View::Compare => self.cmp_move(if k == Key::ArrowDown { 1 } else { -1 }, 0),
+            // 비교열: Home / End = start / end of the row, PageUp / PageDown = a screen of rows
+            Key::Home if self.view == View::Compare => self.cmp_move(0, -(1 << 40)),
+            Key::End if self.view == View::Compare => self.cmp_move(0, 1 << 40),
+            Key::PageDown | Key::PageUp if self.view == View::Compare => {
+                let per = self.settings.cmp_per_screen.clamp(1, 3) as isize;
+                self.cmp_move(if k == Key::PageDown { per } else { -per }, 0)
+            }
             Key::ArrowRight => {
                 if self.view == View::Compare {
-                    self.cmp_focus = (self.cmp_focus + 1).min(self.cmp_ids.len().saturating_sub(1));
+                    self.cmp_move(0, 1);
                 } else {
                     self.move_focus(1, m.shift);
                 }
             }
             Key::ArrowLeft => {
                 if self.view == View::Compare {
-                    self.cmp_focus = self.cmp_focus.saturating_sub(1);
+                    self.cmp_move(0, -1);
                 } else {
                     self.move_focus(-1, m.shift);
                 }
@@ -2563,13 +2872,10 @@ impl App {
                         self.open_in_viewer(&id, None, View::Matrix);
                     }
                 }
-                View::Compare => {
-                    if let Some(id) = self.cmp_ids.get(self.cmp_focus).cloned() {
-                        self.open_in_viewer(&id, None, View::Compare);
-                    }
-                }
+                View::Compare => self.cmp_open_viewer(),
                 View::Viewer => self.go_back(),
             },
+            Key::Space if self.view == View::Compare => self.cmp_open_viewer(),
             Key::Space if matches!(self.view, View::Grid | View::Viewer | View::Albums) => {
                 if self.view == View::Viewer { self.go_back() } else { self.open_viewer(self.view) }
             }
@@ -2589,13 +2895,24 @@ impl App {
                     self.sel.clear();
                 }
             }
-            Key::C if !m.ctrl => match self.view {
-                View::Compare => self.go_back(),
-                View::Matrix => {
-                    let ids = self.matrix_row_ids();
-                    self.open_compare_ids(ids);
+            // Shift+C: the selection into the 비교열 (as a new row)
+            Key::C if !m.ctrl && m.shift => {
+                if self.view != View::Compare {
+                    self.cmp_add_selected(false);
                 }
-                _ => self.open_compare(),
+            }
+            Key::C if !m.ctrl => match self.view {
+                View::Matrix => {
+                    // the focused table row becomes a 비교열 row, shown at once
+                    let ids = self.matrix_row_ids();
+                    let before = self.settings.cmp_rows.len();
+                    self.cmp_add(vec![CmpRow { label: tr("표 비교", "Table compare").to_string(), ids }], false);
+                    if self.settings.cmp_rows.len() > before {
+                        self.cmp_focus = (self.settings.cmp_rows.len() - 1, 0);
+                        self.toggle_cmp();
+                    }
+                }
+                _ => self.toggle_cmp(),
             },
             Key::M if !m.ctrl => {
                 self.view = if self.view == View::Matrix { View::Grid } else { View::Matrix };
@@ -2658,14 +2975,14 @@ impl App {
         });
     }
 
-    fn mark(&mut self, name: &str, r: Rect) {
+    pub(super) fn mark(&mut self, name: &str, r: Rect) {
         self.layout.insert(name.to_string(), r);
     }
 }
 
 const HELP: &str = "조건은 콤마로 나눔 = 모두 맞는 것 (AND).  앞에 - = 빼기.  a|b = 둘 중 하나 (OR).
 검색칸 왼쪽을 OR 로 두면 콤마로 나눈 태그·해시태그는 하나라도 맞으면 됨 (점수·앨범 같은 필터와 - 조건은 그래도 좁힘).
-치는 동안 마지막 말은 그 글자로 시작하는 태그까지 보여 줌 (so → solo). Enter·다른 곳 누르기 = 확정 (정확히 그 태그).
+치는 동안 마지막 말은 그 글자로 시작하는 태그까지 보여 줌 (so → solo). Enter = 확정 (정확히 그 태그). 다른 곳을 눌러도 보이던 그림은 그대로.
 long hair, scar   프롬프트 태그를 통째로 (띄어쓰기 = _, 대소문자·가중치 (tag:1.2) 무시, 문장 프롬프트는 마침표에서도 나눔)
 __scar__  __scar  scar__   scar가 들어간 / scar로 끝나는 / scar로 시작하는 태그
 
@@ -2697,7 +3014,7 @@ Ctrl+클릭 = 그 종류는 이것만.  오른쪽 클릭 = 메뉴.
   Ctrl+V  열린 앨범(맨 위 포함)에: Ctrl+C 한 그림은 같이 들어감(여러 앨범), Ctrl+X 한 그림은 옮겨짐
           탐색기에서 복사한 파일은 가져오기 (앨범이 열려 있으면 거기에도 넣음)
   Ctrl+E 내보내기 (업로드용: jpg·메타데이터 지움·무작위 이름·태그 붙이기)
-  Enter/Space 크게   C 비교   M 표 비교 (시드 × 프리셋)   A 앨범   Esc 뒤로 (앨범: 한 칸 위)
+  Enter/Space 크게   Shift+C 비교열에 추가 (한 번에 한 줄)   C 비교열 보기·닫기   M 표 비교 (시드 × 프리셋)   A 앨범   Esc 뒤로 (앨범: 한 칸 위)
   앨범 뷰: 클릭·Enter 앨범 열기, Ctrl·Shift+클릭·빈 곳에서 끌기 = 고르기, F2 이름,
           Del 고른 앨범 지우기 (그림은 그대로), Shift+Del 앨범과 안의 그림까지 (그림은 imgr 휴지통),
           Ctrl+N·빈 곳 오른쪽 클릭 새 앨범, 그림 Del = 이 앨범에서만 빼기 (마지막 앨범이면 imgr 휴지통),
@@ -2712,7 +3029,7 @@ Ctrl+클릭 = 그 종류는 이것만.  오른쪽 클릭 = 메뉴.
 
 const HELP_EN: &str = "Conditions are separated by commas = all must match (AND).  A leading - = exclude.  a|b = either one (OR).
 With OR left of the search box, comma-separated tags and hashtags match if any one does (filters like score or album and - conditions still narrow).
-While typing, the last word also shows tags starting with it (so → solo). Enter or clicking elsewhere = done (exactly that tag).
+While typing, the last word also shows tags starting with it (so → solo). Enter = done (exactly that tag). Clicking elsewhere keeps the pictures as shown.
 long hair, scar   whole prompt tags (space = _, case and weights (tag:1.2) ignored; sentence prompts also split at full stops)
 __scar__  __scar  scar__   tags containing / ending with / starting with scar
 
@@ -2744,7 +3061,7 @@ Keys
   Ctrl+V  into an open album (the top too): pictures copied with Ctrl+C are added too (several albums), pictures cut with Ctrl+X are moved
           files copied in Explorer are imported (and added to the open album, if any)
   Ctrl+E Export (for uploading: jpg, metadata removed, random names, add a tag)
-  Enter/Space Viewer   C compare   M table compare (seed x preset)   A Albums   Esc back (Albums: up one level)
+  Enter/Space Viewer   Shift+C add to compare rows (one row per add)   C show / close compare rows   M table compare (seed x preset)   A Albums   Esc back (Albums: up one level)
   Album view: click / Enter opens an album, Ctrl / Shift+click / drag on empty space = select, F2 rename,
           Del deletes selected albums (pictures kept), Shift+Del deletes them with their pictures (pictures to the imgr Trash),
           Ctrl+N / right click on empty space = new album, Del on a picture = remove from this album only (Trash if it was the last album),

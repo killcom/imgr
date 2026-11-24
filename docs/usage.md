@@ -21,7 +21,7 @@ Window size and position, side panel widths and the last picture you were viewin
 ## Screen
 
 ```text
-Top: ⚙ Settings · search box · recent searches (▾) · sort · Import · ⟳   (views are Album view / Search view on the left, Viewer = Enter, Compare = C, Table compare = M)
+Top: ⚙ Settings · search box · recent searches (▾) · sort · Import · ⟳   (views are Album view / Search view on the left, Viewer = Enter, Compare rows = C or [Compare rows], Table compare = M)
 ⚙ Settings: Language (한국어 / English, changes as soon as you click) · pictures per folder · Allow script control · clear records of missing pictures
 Left: 🗂 Album view (/ = top level · album tree · Trash. You can click anywhere on a row)
       ▦ Search view (Show all · saved searches · score (N/A = no score) · hashtag · album · checkpoint · LoRA · Workflow info · folder) (click a title to collapse it)
@@ -63,7 +63,7 @@ Ctrl+wheel or the bar at the bottom right = thumbnail size.  "File name" below =
 Drag already selected pictures onto an album (in the left album list or an album on the album screen) to put them in that album (inside Album view this moves them, Ctrl = copy)
 Drag out of the window and the files are handed over as they are to Explorer, a browser upload box, etc.
   (for an unselected picture, click it once to select it, then drag. Esc while dragging = cancel)
-Right-click = menu (Viewer · Compare · score · tags · album · rename · Export · copy · Show in Explorer …)
+Right-click = menu (Viewer · Add to compare rows · score · tags · album · rename · Export · copy · Show in Explorer …)
 ```
 
 ## Viewer
@@ -146,12 +146,20 @@ For frequent searches use "＋ Save current search as filter" on the left. Right
 ▾ = reuse a recent search.
 ```
 
-## Compare (C)
+## Compare rows (C) — several groups side by side, row under row
 
 ```text
-Select 2~12 pictures and press C. They are placed side by side with preset, checkpoint, seed and score shown on top (differing parts are highlighted).
-Wheel zoom and drag apply to all cells together → compare parts like eyes or hands at the same position.
-Click a cell or use ←→ to choose it, then 1~6 = score for that cell. Double-click a cell = view that picture large. Esc = go back.
+Right-click pictures or albums → 'Add to compare rows' (Shift+C) or 'Clear compare rows and add'. Each add is one row (any number of pictures).
+Picked pictures become one row, each picked album its own row (with its sub albums, in the current sort). Also in the right-click menu of the left album list.
+[Compare rows N] at the top or C = show / close them. The rows are kept when imgr closes (50 rows, up to 300 pictures per row).
+Top left of each row: ✕ = remove the row (the pictures stay), ⤒ ↑ ↓ ⤓ = to the top / up / down / to the bottom. At the top: 'Clear all' and 'Rows per screen 1 · 2 · 3'.
+Wheel = up/down, Shift+wheel = sideways, drag = move (when zoomed in: pan inside the pictures), and scroll bars.
+Ctrl+wheel = zoom (all cells together) → compare parts like eyes or hands at the same position. R = fit.
+Each cell shows preset, checkpoint, seed on top (parts that differ across all rows are bright). Cells have one size, so the same column lines up from row to row.
+Click a cell or use ←→↑↓ (Home / End = start / end of the row, PageUp / PageDown = a screen of rows), then 1~6 = score for that cell.
+Double-click, Enter or Space = Viewer: ←/→ walk that row, Esc comes back to the compare rows with the zoom as it was. Right-click → 'Take out of this row'.
+A row of the same pictures is not added twice. Removing a row, Clear all, Clear and add and Take out of this row are undone with Ctrl+Z.
+In Table compare (M), C = put the current row into the compare rows and show them.
 ```
 
 ## Table compare (M) — checkpoint and preset test results at a glance
@@ -197,7 +205,7 @@ Album view:
   When you select a picture, it is shown large at the top of the right panel.
   Typing in the search box in Album view, or clicking a filter in Search view, switches to Search view.
 "Album" in the right info panel = the albums the picture is in (click to open that album).
-Preset values themselves are read only from file names of the form g_<preset>_<number> (setting them by hand was removed) and are used only in Table compare and Compare.
+Preset values themselves are read only from file names of the form g_<preset>_<number> (setting them by hand was removed) and are used only in Table compare and the compare rows.
 ```
 
 ## Deleting

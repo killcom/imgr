@@ -552,6 +552,19 @@ impl App {
     }
 
     /// Right-click menu for the selected albums.
+    /// '비교열에 추가' / '비교열 비우고 추가' (pictures and album cells alike)
+    fn cmp_menu_items(&mut self, ui: &mut egui::Ui) {
+        let tip = tr("고른 그림은 한 줄로, 고른 앨범은 앨범마다 한 줄로 (하위 앨범의 그림까지)", "Picked pictures as one row, each picked album as its own row (with its sub albums)");
+        if ui.button(tr("비교열에 추가    Shift+C", "Add to compare rows    Shift+C")).on_hover_text(tip).clicked() {
+            self.cmp_add_selected(false);
+            ui.close();
+        }
+        if ui.button(tr("비교열 비우고 추가", "Clear compare rows and add")).on_hover_text(tip).clicked() {
+            self.cmp_add_selected(true);
+            ui.close();
+        }
+    }
+
     pub(super) fn album_menu(&mut self, ui: &mut egui::Ui) {
         let mut ids: Vec<u32> = self.album_sel.iter().copied().collect();
         ids.sort_unstable();
@@ -580,6 +593,7 @@ impl App {
             ui.label(egui::RichText::new(trf!("앨범 {}개", "{} albums", ids.len())).color(DIM));
             ui.separator();
         }
+        self.cmp_menu_items(ui);
         if ui.button(tr("잘라 두기 (옮기기)    Ctrl+X", "Cut (to move)    Ctrl+X")).on_hover_text(tr("옮길 곳을 열고 Ctrl+V", "Open the destination and press Ctrl+V")).clicked() {
             self.album_copy(true);
             ui.close();
@@ -616,9 +630,13 @@ impl App {
             self.open_in_viewer(&id, None, from);
             ui.close();
         }
-        if ids.len() >= 2 && ui.button(trf!("비교 ({}장)    C", "Compare ({})    C", ids.len().min(12))).clicked() {
-            self.open_compare_ids(ids.clone());
-            ui.close();
+        if self.view == View::Compare {
+            if ui.button(tr("이 줄에서 빼기", "Take out of this row")).on_hover_text(tr("비교열의 이 줄에서만 뺌 (그림은 그대로)", "Only out of this compare row (the picture stays)")).clicked() {
+                self.cmp_take_out_focused();
+                ui.close();
+            }
+        } else {
+            self.cmp_menu_items(ui);
         }
         ui.menu_button(tr("점수", "Score"), |ui| {
             for n in 1..=6u8 {

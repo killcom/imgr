@@ -58,6 +58,19 @@ pub struct Settings {
     pub del_swap: bool,
     /// Screen language: "ko" or "en" (first start: the language of Windows).
     pub lang: String,
+    /// 비교열: rows of pictures compared side by side, one row per "add" (kept across restarts)
+    pub cmp_rows: Vec<CmpRow>,
+    /// 비교열 screen: how many rows fit on one screen (1-3)
+    pub cmp_per_screen: u8,
+}
+
+/// One 비교열 row: the pictures added together (a selection or an album).
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+#[serde(default)]
+pub struct CmpRow {
+    /// where it came from (album path, search, ...)
+    pub label: String,
+    pub ids: Vec<String>,
 }
 
 impl Default for Settings {
@@ -99,6 +112,8 @@ impl Default for Settings {
             del_swap: false,
             ctl: false,
             lang: crate::i18n::system_lang(),
+            cmp_rows: Vec::new(),
+            cmp_per_screen: 2,
         }
     }
 }

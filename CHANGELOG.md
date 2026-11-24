@@ -1,5 +1,11 @@
 # 바뀐 것 / Changes
 
+## v0.31
+- 비교 → 비교열: 그림·앨범 오른쪽 클릭 → '비교열에 추가'(Shift+C) / '비교열 비우고 추가', 한 번 넣은 것이 한 줄 (앨범은 앨범마다 한 줄), 위 [비교열] 버튼·C 로 보기·닫기, 꺼도 남음 — Compare becomes Compare rows: right-click pictures or albums → 'Add to compare rows' (Shift+C) / 'Clear compare rows and add', each add is one row (each album its own row), [Compare rows] at the top or C shows them, kept across restarts
+- 비교열 화면: 줄마다 ✕ ⤒ ↑ ↓ ⤓, 위아래·좌우 스크롤(휠·Shift+휠·끌기·스크롤바), Ctrl+휠 확대(모든 칸 같이), 한 화면에 1·2·3줄, 모두 비우기, 오른쪽 클릭 → 이 줄에서 빼기 — the compare rows screen: ✕ ⤒ ↑ ↓ ⤓ per row, scrolling both ways (wheel, Shift+wheel, drag, scroll bars), Ctrl+wheel zoom (all cells together), 1 · 2 · 3 rows per screen, Clear all, right-click → Take out of this row
+- 비교열에서 연 크게 보기: ←/→ 는 그 줄 안에서, Esc 는 확대한 그대로 비교열로; 표 비교에서 C = 지금 행을 비교열에 넣고 보기 — the Viewer opened from the compare rows walks that row and goes back to them on Esc with the zoom kept; C in Table compare puts the current row into the compare rows
+- 비교열 줄 지우기·모두 비우기·비우고 추가·줄에서 빼기는 Ctrl+Z 로 되돌림; 같은 그림들의 줄은 두 번 안 들어감; 넣을 것이 없으면 '비우고 추가'도 아무것도 안 지움 — removing rows, Clear all, Clear and add and Take out are undone with Ctrl+Z; a row of the same pictures is not added twice; 'Clear and add' with nothing to add clears nothing
+
 ## v0.30
 - 앨범 뷰의 맨 위(/)를 다른 앨범과 똑같이 저장 (앨범 0): 새 그림은 맨 위에 들어가고, 복사·옮기기·Del·오른쪽 클릭 → 앨범이 맨 위에서도 다른 앨범과 같은 규칙. 예전 기록은 처음 켤 때 한 번 바뀜 (예전 판으로 열어도 같게 보임) — the album view's top (/) is stored like any album (album 0): new pictures go there, and copy / move / Del / right-click → Album follow the same rules there as in any album. Older records are converted once at start (older versions still show them the same)
 - 그림 오른쪽 클릭의 '모든 앨범에서 빼기' → '맨 위에만 두기' — 'Remove from all albums' in the picture menu is now 'Only at the top'

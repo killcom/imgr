@@ -130,6 +130,14 @@ impl App {
                 self.scroll_to = Some(0);
             }
             ui.separator();
+            let n_rows = self.settings.cmp_rows.len();
+            let r = ui
+                .selectable_label(self.view == View::Compare, trf!("비교열 {n_rows}", "Compare rows {n_rows}"))
+                .on_hover_text(tr("비교열 보기 / 닫기 (C)\n그림·앨범 오른쪽 클릭 → 비교열에 추가 (Shift+C): 한 번 넣은 것이 한 줄", "Show / close the compare rows (C)\nRight-click pictures or albums → Add to compare rows (Shift+C): each add is one row"));
+            self.mark("cmp_button", r.rect);
+            if r.clicked() {
+                self.toggle_cmp();
+            }
             let r = ui.button(tr("＋ 가져오기", "＋ Import")).on_hover_text(tr("다른 폴더 그림을 imgs로 넣기 (창에 끌어다 놓기·Ctrl+V도 됨)", "Add pictures from another folder to imgs (drag onto the window or Ctrl+V also work)"));
             self.mark("import", r.rect);
             if r.clicked() {
@@ -403,6 +411,10 @@ Both on = all, only one on = just those (not applied in Album view)"));
                     }
                 }
                 LeftAction::OpenAlbum(a) => self.open_album(a),
+                LeftAction::CompareAlbum(id, clear) => {
+                    let row = self.cmp_album_row(id);
+                    self.cmp_add(vec![row], clear);
+                }
                 LeftAction::AddToAlbum(to) => {
                     let ids = self.selected_ids();
                     self.add_to_album(&ids, to);
@@ -501,6 +513,14 @@ Both on = all, only one on = just those (not applied in Album view)"));
                     *action = Some(LeftAction::AddToAlbum(Some(id)));
                     ui.close();
                 }
+                if ui.button(tr("비교열에 추가", "Add to compare rows")).on_hover_text(tr("이 앨범의 그림(하위 앨범까지)을 비교열의 한 줄로", "This album's pictures (with its sub albums) as one compare row")).clicked() {
+                    *action = Some(LeftAction::CompareAlbum(id, false));
+                    ui.close();
+                }
+                if ui.button(tr("비교열 비우고 추가", "Clear compare rows and add")).clicked() {
+                    *action = Some(LeftAction::CompareAlbum(id, true));
+                    ui.close();
+                }
                 if ui.button(tr("하위 앨범 만들기", "Create sub album")).clicked() {
                     *action = Some(LeftAction::NewAlbum(id));
                     ui.close();
@@ -578,7 +598,7 @@ Right-click: empty Trash"));
                 ui.label(egui::RichText::new(tr("그림을 고르면 여기에 정보가 나옵니다", "Pick a picture to see its info here")).color(DIM));
                 return;
             }
-            let focus_id = if self.view == View::Compare { self.cmp_ids.get(self.cmp_focus).cloned() } else { self.focus_img().map(|i| i.id.clone()) };
+            let focus_id = if self.view == View::Compare || self.viewer_in_cmp() { self.cmp_focus_id() } else { self.focus_img().map(|i| i.id.clone()) };
             let main_id = focus_id.filter(|f| ids.contains(f)).unwrap_or_else(|| ids[0].clone());
             let Some(im) = self.img(&main_id).cloned() else { return };
 
@@ -948,6 +968,8 @@ enum LeftAction {
     MoveAlbum(u32, u32),
     /// put the selected pictures into an album (None = out of every album)
     AddToAlbum(Option<u32>),
+    /// an album as a compare row (true = clear the rows first)
+    CompareAlbum(u32, bool),
     /// open in the album view (None = 루트, Some(None) = 무소속)
     OpenAlbum(Option<Option<u32>>),
     /// 태그 여부: (워크플로, 태그없음) on/off

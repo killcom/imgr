@@ -13,7 +13,7 @@ view{mode:grid|viewer|compare|matrix|albums,zoom,center} key{key,ctrl,shift} pre
 mouse{op:move|click|dblclick|right|down|up|drag,x,y,to:[x,y],steps,ctrl,shift} wheel{x,y,dy,ctrl} \
 thumb{size} window{w,h} layout screenshot{path} rescan import{from,move} save_filter{name,q} notice{text} \
 albums album_new{name,parent} album_rename{id,name} album_delete{id} album_sel{ids,only} album_put{id|none} album_open{id|none|top} drop{files} rename{name|pattern,start|upload} export{dir,fmt,quality,upload,tag} panel{show_left,show_right} \
-modal{close} focus save quit";
+cmp_add{clear} cmp_row{row,op:remove|up|down|top|bottom} modal{close} focus save quit";
 
 fn img_json(i: &Img) -> Value {
     json!({"id": i.id, "path": i.path, "score": i.score, "tags": i.tags, "preset": i.preset, "ckpt": i.ckpt,
@@ -166,6 +166,27 @@ impl App {
                     self.do_undo();
                     Some(self.state_json())
                 }
+                "cmp_add" => {
+                    self.cmp_add_selected(flag("clear").unwrap_or(false));
+                    Some(self.state_json())
+                }
+                "cmp_row" => {
+                    let op = match s("op").as_deref() {
+                        Some("remove") => Some(CmpOp::Remove),
+                        Some("up") => Some(CmpOp::Up),
+                        Some("down") => Some(CmpOp::Down),
+                        Some("top") => Some(CmpOp::Top),
+                        Some("bottom") => Some(CmpOp::Bottom),
+                        _ => None,
+                    };
+                    match (op, b.get("row").and_then(|v| v.as_u64())) {
+                        (Some(op), Some(r)) => {
+                            self.cmp_row_op(r as usize, op);
+                            Some(self.state_json())
+                        }
+                        _ => Some(json!({"ok": false, "error": "row and op (remove|up|down|top|bottom) needed"})),
+                    }
+                }
                 "view" => {
                     match s("mode").as_deref() {
                         Some("grid") => self.view = View::Grid,
@@ -174,7 +195,11 @@ impl App {
                                 self.open_viewer(self.view);
                             }
                         }
-                        Some("compare") => self.open_compare(),
+                        Some("compare") => {
+                            if self.view != View::Compare {
+                                self.toggle_cmp();
+                            }
+                        }
                         Some("matrix") => {
                             self.back_view = View::Grid;
                             self.view = View::Matrix;
@@ -531,7 +556,8 @@ impl App {
             "import": self.import_progress.map(|(d, t)| json!([d, t])),
             "export": self.export_progress.map(|(d, t)| json!([d, t])),
             "notice": self.notices.back().map(|n| n.text.clone()),
-            "compare": self.cmp_ids,
+            "compare": self.settings.cmp_rows.iter().map(|r| json!({"label": r.label, "ids": r.ids})).collect::<Vec<_>>(),
+            "cmp_focus": [self.cmp_focus.0, self.cmp_focus.1],
             "zoom": self.zp.zoom,
             "window": [self.window_size.x, self.window_size.y],
             "panels": {"left": self.settings.show_left.then_some(self.settings.left_w), "right": self.settings.show_right.then_some(self.settings.right_w)},
